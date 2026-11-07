@@ -56,6 +56,16 @@ kong-azure-vm-gateway/
 │   ├── secret-provider-class.yaml      # Key Vault CA → CSI → pairs-monitor-ca
 │   ├── network-policy.yaml             # Admin API only from KIC
 │   └── README.md                       # chart-level detail, fallbacks, troubleshooting
+├── certificates/
+│   ├── create-root-ca.sh               # one-time private Root CA
+│   ├── generate-vm-csr.sh              # VM-local key + CSR (runs on the VM)
+│   ├── sign-vm-csr.sh                  # controlled signing host
+│   ├── issue-vm-certificates.sh        # signs all backend CSRs from config
+│   ├── validate-certificate.sh         # SAN/EKU/chain/key-match checks
+│   └── install-vm-certificate.sh       # keystore + env + restart (runs on the VM)
+├── vm/
+│   ├── install-hello-service.sh        # hello user, dirs, systemd unit
+│   └── reload-application.sh           # restart + local HTTPS health check
 ├── scripts/
 │   ├── lib.sh                          # config loading + manifest rendering
 │   ├── kong-install.sh                 # CRDs + Helm install (CSI-aware)
@@ -67,8 +77,8 @@ kong-azure-vm-gateway/
 └── README.md                           # this file
 ```
 
-Not present yet: `terraform/`, `certificates/`, `vm/`, `automation/`,
-`monitoring/`, `.github/workflows/`, `config/schema.json` and the validation
+Not present yet: `terraform/`, `automation/`, `monitoring/`,
+`.github/workflows/`, `config/schema.json` and the remaining validation
 scripts listed in the specification.
 
 ## Pinned versions
@@ -89,6 +99,8 @@ experimental. Bump `config/config.yaml` only after re-checking that matrix.
 
 - `kubectl` 1.29+ pointed at the target cluster, `helm` 3.14+
 - `yq` v4 (mikefarah), `envsubst` (gettext), `python3` (runtime validation), `bash` 4+
+- `openssl` 1.1.1+ for the certificate scripts; `az` only for Key Vault upload/download
+- On the VMs: Java 21, `systemd`, `openssl`, `curl`
 - Azure access for later phases (the phase-1 scripts never call Azure)
 
 The scripts run in WSL on this workstation; `yq` is installed at `~/bin/yq`.
@@ -118,6 +130,77 @@ helm template kong kong/ingress --version 0.24.0 -n kong \
 
 Production uses `--env prod` (internal Azure LoadBalancer) and `kong-upgrade.sh`
 requires `--yes` before applying anything.
+
+## VM certificate and application deployment
+
+The `certificates/` and `vm/` scripts implement the VM side of the chain. No
+live VMs were available here, so they were validated end to end against a
+temporary prefix (Root CA -> CSRs -> signed certificates -> keystore -> systemd
+unit), and the resulting keystore was used to start the Java app; `curl --cacert`
+verified the chain and SAN.
+
+### Certificate workflow
+
+```bash
+# 1. Signing host only: create the Root CA once. The CA key never leaves this host.
+./certificates/create-root-ca.sh --out-dir ./pki
+
+# 2. On each VM: generate the private key + CSR. The key never leaves the VM.
+./certificates/generate-vm-csr.sh --out-dir /etc/hello/csr --name vm1 \
+  --cn pairs-monitor.be.com --san pairs-monitor.be.com
+# Copy only /etc/hello/csr/vm1.csr to the signing host (never vm1.key), e.g.:
+#   scp vm1:/etc/hello/csr/vm1.csr ./csr/vm1.csr
+# Repeat with --name vm2.
+
+# 3. Signing host: sign every backend CSR from config/config.yaml.
+./certificates/issue-vm-certificates.sh \
+  --csr-dir ./csr \
+  --ca-cert ./pki/root-ca.crt --ca-key ./pki/root-ca.key \
+  --out-dir ./pki/issued \
+  --upload-keyvault --vault-name <key-vault-name>
+# Optional: --upload-keyvault stores the public leaf+chain as the KV secret named
+# backends[].certificate_name (pairs-monitor-vm1-tls / -vm2-tls).
+
+# 4. On each VM: install the certificate/keystore and restart + validate.
+./certificates/install-vm-certificate.sh \
+  --cert ./pki/issued/vm1.crt --chain ./pki/root-ca.crt --ca ./pki/root-ca.crt \
+  --key /etc/hello/csr/vm1.key
+```
+
+`install-vm-certificate.sh` also supports:
+
+```bash
+--from-keyvault --vault-name <kv> --secret-name pairs-monitor-vm1-tls
+```
+
+The private key must already be on the VM; it is never downloaded or accepted
+from Key Vault. The public leaf+chain is stored in Key Vault; the VM needs
+`Key Vault Secrets User` only if it pulls the certificate directly. The signing
+host needs `Key Vault Secrets Officer` to upload the public chain.
+
+### Systemd service
+
+```bash
+# On the VM, after copying hello-app.jar and installing Java 21:
+./vm/install-hello-service.sh --jar /tmp/hello-app.jar --start
+./vm/reload-application.sh --ca /etc/hello/tls/ca.crt
+```
+
+`install-hello-service.sh` creates:
+
+- system user/group `hello` (no login shell)
+- `/opt/hello-app/hello-app.jar`
+- `/etc/hello/hello.env` (0600; `PORT`, `TLS_KEYSTORE_PATH`, `TLS_KEYSTORE_TYPE`;
+  `install-vm-certificate.sh` adds `TLS_KEYSTORE_PASSWORD`)
+- `/etc/hello/tls/` (0750; certs 0644, key/keystore 0600)
+- `/etc/systemd/system/hello-app.service` with `NoNewPrivileges`,
+  `ProtectSystem=strict`, `PrivateTmp`, `UMask=0077`, `Restart=on-failure`
+- `systemctl enable`; `--start` starts only when the keystore exists
+
+New-VM order: install Java 21 -> `install-hello-service.sh` -> generate key/CSR ->
+sign -> `install-vm-certificate.sh` (or `--skip-restart` + `reload-application.sh`).
+`reload-application.sh` restarts the unit and verifies
+`https://pairs-monitor.be.com:8100/health` locally with the private CA.
 
 ### Phase-1 prerequisites you must supply
 
@@ -159,6 +242,9 @@ Details and the no-Key-Vault CA stand-in are in `helm/README.md`.
   fails on mismatch; Kubernetes object creation alone is not treated as success.
 - Kong never sees VM private keys: only the public CA certificate is mounted from
   Key Vault.
+- VM private keys are generated on each VM and never leave it; only the public
+  leaf+chain certificate is stored in Key Vault. The systemd service runs as a
+  dedicated `hello` user with a 0600 keystore/env file.
 - CSI sync is proven, not assumed: install waits for a gateway pod to mount the
   SecretProviderClass, `SecretProviderClassPodStatus.mounted=true`, and a synced
   Secret containing `ca.crt` + `id`; failure prints pod/CSI diagnostics.
@@ -186,6 +272,10 @@ Details and the no-Key-Vault CA stand-in are in `helm/README.md`.
   the Java tests were validated locally, but `wait_for_csi_secret`, the fail-closed
   policy checks and `validate-kong.sh` have not been executed against a live AKS
   cluster in this increment.
+- The `certificates/` and `vm/` scripts were exercised end to end against a temporary
+  prefix (Root CA, CSRs, signed certificates, PKCS#12 keystore, systemd unit) and the
+  keystore was used to start the Java app. `systemctl`, real VM users/ownership and
+  the `az keyvault` upload/download paths were not executed on live VMs.
 
 ## Next phases
 

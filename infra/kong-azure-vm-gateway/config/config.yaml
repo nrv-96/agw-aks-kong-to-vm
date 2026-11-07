@@ -43,6 +43,19 @@ application:
   port: 8100
   health_endpoint: "/health"
 
+# Linux VM application service layout (used by certificates/ and vm/ scripts).
+vm:
+  app_user: "hello"
+  app_group: "hello"
+  service_name: "hello-app"
+  install_dir: "/opt/hello-app"
+  config_dir: "/etc/hello"
+  tls_dir: "/etc/hello/tls"
+  keystore_path: "/etc/hello/tls/keystore.p12"
+  env_file: "/etc/hello/hello.env"
+  jar_name: "hello-app.jar"
+  java_bin: "/usr/bin/java"
+
 kong:
   namespace: "kong"
   release_name: "kong"
@@ -91,6 +104,7 @@ certificates:
   root_ca_id_name: "pairs-monitor-root-ca-id"
   key_algorithm: "RSA"
   key_size: 3072
+  root_ca_validity_days: 3650
   minimum_tls_version: "TLS1.2"
   renewal_threshold_days: 30
   server_certificate_validity_days: 365

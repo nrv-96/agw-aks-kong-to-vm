@@ -7,6 +7,9 @@
 *.pfx
 *.p12
 certs/
+pki/
+csr/
+issued/
 secrets/
 *.secret.yaml
 *.secret.yml
