@@ -1,0 +1,175 @@
+# =============================================================================
+# Base values for chart kong/ingress 0.24.0
+#   controller subchart = kong/kong 3.2.0 running KIC 3.5.x
+#   gateway    subchart = kong/kong 3.2.0 running Kong Gateway 3.9.x (OSS)
+#
+# This file is consumed by scripts/kong-install.sh:
+#   helm upgrade --install <release> kong/ingress \
+#     --version "${KONG_CHART_VERSION}" \
+#     -n "${KONG_NAMESPACE}" --create-namespace \
+#     -f helm/values.yaml -f helm/values-<env>.yaml \
+#     --set gateway.image.tag="${KONG_GATEWAY_TAG}" \
+#     --set controller.ingressController.image.tag="${KIC_TAG}"
+#
+# Do not put subscription IDs, secrets or environment-specific hosts here.
+# =============================================================================
+
+gateway:
+  enabled: true
+
+  # Three data-plane replicas. KIC itself is a single leader-elected deployment
+  # in the official chart (not a data path component).
+  replicaCount: 3
+
+  image:
+    repository: kong
+    tag: "3.9.4"          # overridden from config/config.yaml at install time
+    pullPolicy: IfNotPresent
+
+  # Kong configuration (rendered as KONG_* environment variables).
+  env:
+    database: "off"                 # DB-less / Ingress-controller managed
+    router_flavor: "traditional"    # required for KIC-generated routes
+    ssl_protocols: "TLSv1.2 TLSv1.3"
+    ssl_ciphers: "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384"
+    # Kong 3.9 has no `proxy_server_tokens` setting - response header injection
+    # is controlled only by `headers` (validated against kong.conf.default).
+    # Do NOT list `server_tokens`: that enables `Server` + `Via` version
+    # disclosure. Keep latency metrics and the request id for correlation.
+    headers: "latency_tokens,X-Kong-Request-Id"
+    # Keep upstream connections bounded; VM apps are behind a private network.
+    upstream_keepalive_connections: "40"
+    upstream_keepalive_idle_timeout: "30"
+
+  # Admin API stays cluster-internal. KIC discovers it through gateway discovery.
+  admin:
+    enabled: true
+    type: ClusterIP
+    clusterIP: None
+    http:
+      enabled: false
+    tls:
+      enabled: true
+      servicePort: 8444
+      containerPort: 8444
+      parameters:
+        - http2
+
+  proxy:
+    enabled: true
+    type: LoadBalancer            # overridden per environment
+    annotations: {}
+    http:
+      enabled: true
+      servicePort: 80
+      containerPort: 8000
+    tls:
+      enabled: true
+      servicePort: 443
+      containerPort: 8443
+      parameters:
+        - http2
+
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      cpu: "1"
+      memory: 1Gi
+
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: "2"
+
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: topology.kubernetes.io/zone
+      whenUnsatisfiable: ScheduleAnyway
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/name: gateway
+          app.kubernetes.io/component: app
+
+  readinessProbe:
+    httpGet:
+      path: "/status/ready"
+      port: status
+      scheme: HTTP
+    initialDelaySeconds: 5
+    timeoutSeconds: 5
+    periodSeconds: 10
+    failureThreshold: 3
+
+  livenessProbe:
+    httpGet:
+      path: "/status"
+      port: status
+      scheme: HTTP
+    initialDelaySeconds: 10
+    timeoutSeconds: 5
+    periodSeconds: 10
+    failureThreshold: 3
+
+  # kong quit waits up to 45s for in-flight requests; grace period must be larger.
+  lifecycle:
+    preStop:
+      exec:
+        command:
+          - kong
+          - quit
+          - "--wait=45"
+  terminationGracePeriodSeconds: 60
+
+  # Kong Manager / Dev Portal are Enterprise-only; the OSS image cannot serve
+  # them, so their Services are not created (values-csi.yaml holds the Key
+  # Vault CSI volume, which is only enabled when the driver is installed).
+  manager:
+    enabled: false
+  portal:
+    enabled: false
+
+controller:
+  enabled: true
+
+  ingressController:
+    enabled: true
+
+    image:
+      repository: kong/kubernetes-ingress-controller
+      tag: "3.5.14"       # overridden from config/config.yaml at install time
+      pullPolicy: IfNotPresent
+
+    env:
+      # BackendTLSPolicy is an alpha Gateway API resource in Gateway API 1.3
+      # and requires the GatewayAlpha gate in KIC 3.5.x.
+      feature_gates: "GatewayAlpha=true"
+      # Kong 3.9 generates a self-signed admin certificate. Revisit once the
+      # admin listener uses a private-CA certificate (phase 9 hardening).
+      kong_admin_tls_skip_verify: "true"
+
+    gatewayDiscovery:
+      enabled: true
+      generateAdminApiService: true
+
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+
+    readinessProbe:
+      httpGet:
+        path: "/readyz"
+        port: 10254
+      initialDelaySeconds: 5
+      timeoutSeconds: 5
+      periodSeconds: 10
+      failureThreshold: 3
+
+# Chart defaults include a `deployment.test` sub-chart block; keep it disabled.
+deployment:
+  test:
+    enabled: false

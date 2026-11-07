@@ -1,0 +1,39 @@
+# --- secrets and certificate material ---------------------------------------
+*.key
+*.pem
+*.crt
+*.csr
+*.srl
+*.pfx
+*.p12
+certs/
+secrets/
+*.secret.yaml
+*.secret.yml
+
+# --- local configuration overrides -----------------------------------------
+config/config.local.yaml
+config/*.local.yaml
+.env
+.env.*
+
+# --- terraform (phase 2) ----------------------------------------------------
+.terraform/
+.terraform.lock.hcl.bak
+*.tfstate
+*.tfstate.*
+*.tfplan
+crash.log
+crash.*.log
+
+# --- rendered / generated output -------------------------------------------
+rendered/
+*.rendered.yaml
+deployment-report.*.md
+report-*.json
+
+# --- tooling ----------------------------------------------------------------
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db

@@ -1,0 +1,35 @@
+# Manually managed EndpointSlice for the two external VMs.
+#
+# Rendered from config/config.yaml backends[].private_ip. This is the single
+# registration mechanism for the VM targets - do not also create Kong
+# Upstream/Target CRs or an ExternalName Service for the same backends.
+#
+# KIC ignores `appProtocol`, so the HTTPS scheme is set by BackendTLSPolicy.
+---
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  name: pairs-monitor-backend-vms
+  namespace: ${NAMESPACE}
+  labels:
+    kubernetes.io/service-name: pairs-monitor-backend
+    endpointslice.kubernetes.io/managed-by: pairs-monitor-automation
+    app.kubernetes.io/part-of: pairs-monitor
+addressType: IPv4
+ports:
+  - name: https
+    port: ${BACKEND_PORT}
+    protocol: TCP
+endpoints:
+  - addresses:
+      - "${VM1_IP}"
+    conditions:
+      ready: true
+      serving: true
+      terminating: false
+  - addresses:
+      - "${VM2_IP}"
+    conditions:
+      ready: true
+      serving: true
+      terminating: false

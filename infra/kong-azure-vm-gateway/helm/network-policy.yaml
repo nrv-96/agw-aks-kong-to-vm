@@ -1,0 +1,44 @@
+# Restrict the Kong Admin API (8444) to the Ingress Controller pods.
+#
+# Selecting the Kong data-plane pods with a NetworkPolicy means every ingress
+# path to those pods must be explicitly allowed, so the public proxy ports
+# (8000/8443) are allowed below as well. Kubelet probes target the status port
+# (8100), so that port is allowed explicitly too.
+#
+# Restricting the proxy ports to the Application Gateway subnet is done in
+# phase 12 once the AG subnet CIDR is known.
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: kong-admin-restricted
+  namespace: ${NAMESPACE}
+  labels:
+    app.kubernetes.io/part-of: pairs-monitor
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: gateway
+      app.kubernetes.io/instance: ${RELEASE_NAME}
+  policyTypes:
+    - Ingress
+  ingress:
+    # Proxy listeners stay reachable by the internal load balancer.
+    # 8100 (status API) must stay open for kubelet readiness/liveness probes;
+    # blocking it would prevent the gateway pods from ever becoming Ready.
+    - ports:
+        - protocol: TCP
+          port: 8000
+        - protocol: TCP
+          port: 8443
+        - protocol: TCP
+          port: 8100
+    # Admin API only from the Kong Ingress Controller.
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: controller
+              app.kubernetes.io/instance: ${RELEASE_NAME}
+      ports:
+        - protocol: TCP
+          port: 8444

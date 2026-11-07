@@ -1,0 +1,36 @@
+# Key Vault CSI integration for the Kong data plane.
+#
+# Include this file ONLY when the Azure Key Vault provider for the Secrets
+# Store CSI driver is installed in the cluster:
+#
+#   helm upgrade --install kong kong/ingress \
+#     -f helm/values.yaml -f helm/values-prod.yaml -f helm/values-csi.yaml
+#
+# scripts/kong-install.sh adds it automatically when the
+# `secretproviderclasses.secrets-store.csi.x-k8s.io` CRD is present, and it
+# applies the SecretProviderClass *before* Helm so the volume can be attached.
+#
+# Mounting the volume is what makes the CSI driver create and refresh the
+# `pairs-monitor-ca` Kubernetes Secret consumed by KIC's BackendTLSPolicy.
+# Never mount VM private keys here.
+gateway:
+  env:
+    # Kong's active health checks use the global Lua cosocket trust store, NOT
+    # the Kong Service `ca_certificates` (those only cover proxied requests).
+    # "system" keeps the public distro bundle; append the private root CA from
+    # the CSI mount so HTTPS health checks against the VMs can verify it.
+    # Kong resolves the comma-separated list at startup (see kong.conf.default).
+    lua_ssl_trusted_certificate: "system,/etc/kong/trust/ca.crt"
+
+  deployment:
+    userDefinedVolumes:
+      - name: pairs-monitor-ca
+        csi:
+          driver: secrets-store.csi.k8s.io
+          readOnly: true
+          volumeAttributes:
+            secretProviderClass: pairs-monitor-ca
+    userDefinedVolumeMounts:
+      - name: pairs-monitor-ca
+        mountPath: /etc/kong/trust
+        readOnly: true

@@ -1,0 +1,45 @@
+# Kong Upstream policy: round-robin across the two VM targets plus active
+# HTTPS health checks against /health, using SNI+hostname verification.
+#
+# Attached to the pairs-monitor-backend Service through the
+# `konghq.com/upstream-policy` annotation in service.yaml.
+---
+apiVersion: configuration.konghq.com/v1beta1
+kind: KongUpstreamPolicy
+metadata:
+  name: pairs-monitor-backend-policy
+  namespace: ${NAMESPACE}
+  labels:
+    app.kubernetes.io/part-of: pairs-monitor
+spec:
+  algorithm: round-robin
+  slots: 10000
+  healthchecks:
+    threshold: 50
+    active:
+      type: https
+      concurrency: 2
+      httpPath: ${HEALTH_PATH}
+      httpsSni: ${BACKEND_HOSTNAME}
+      httpsVerifyCertificate: true
+      timeout: 5
+      healthy:
+        interval: 10
+        successes: 2
+        httpStatuses: [200, 201, 204]
+      unhealthy:
+        interval: 10
+        httpFailures: 3
+        tcpFailures: 3
+        timeouts: 3
+        httpStatuses: [429, 500, 502, 503, 504]
+    passive:
+      type: https
+      healthy:
+        successes: 2
+        httpStatuses: [200, 201, 204]
+      unhealthy:
+        httpFailures: 3
+        tcpFailures: 3
+        timeouts: 3
+        httpStatuses: [429, 500, 502, 503, 504]

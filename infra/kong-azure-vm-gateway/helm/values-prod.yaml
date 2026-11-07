@@ -1,0 +1,55 @@
+# Production profile for AKS.
+#
+# The Kong proxy is exposed on an *internal* Azure Load Balancer consumed by
+# Application Gateway (phase 12). VM application ports are never exposed here.
+#
+# If the AKS cluster has more than one node subnet, add:
+#   service.beta.kubernetes.io/azure-load-balancer-internal-subnet: "<aks-ingress-subnet>"
+gateway:
+  # Mirrors config/config.yaml -> kong.replicas; the install/upgrade scripts
+  # still pass --set gateway.replicaCount for prod so config stays authoritative.
+  replicaCount: 3
+
+  proxy:
+    type: LoadBalancer
+    annotations:
+      service.beta.kubernetes.io/azure-load-balancer-internal: "true"
+      # Deliberately NO azure-load-balancer-health-probe-request-path: Kong's
+      # status API listens on 8100, not on the proxy ports (8000/8443). An HTTP
+      # probe on those ports returns 404, and TLS on 8443 breaks an HTTP probe,
+      # so Azure keeps the default TCP probe. Traffic is still gated by the
+      # Kubernetes readiness probe (/status/ready on 8100): NotReady pods are
+      # removed from the Service endpoints.
+
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+
+  podDisruptionBudget:
+    enabled: true
+    minAvailable: "2"
+
+  # Spread across zones, and prefer spreading across nodes within a zone.
+  topologySpreadConstraints:
+    - maxSkew: 1
+      topologyKey: topology.kubernetes.io/zone
+      whenUnsatisfiable: ScheduleAnyway
+      labelSelector:
+        matchLabels:
+          app.kubernetes.io/name: gateway
+          app.kubernetes.io/component: app
+
+  affinity:
+    podAntiAffinity:
+      preferredDuringSchedulingIgnoredDuringExecution:
+        - weight: 100
+          podAffinityTerm:
+            topologyKey: kubernetes.io/hostname
+            labelSelector:
+              matchLabels:
+                app.kubernetes.io/name: gateway
+                app.kubernetes.io/component: app

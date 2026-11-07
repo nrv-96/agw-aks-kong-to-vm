@@ -1,0 +1,32 @@
+# Backend Kubernetes Service for the two external Linux VMs.
+#
+# - No selector: endpoints are supplied by endpointslice.yaml.
+# - Kong service protocol (https), SNI, Host header and certificate verification
+#   all come from BackendTLSPolicy (backend-tls-policy.yaml). Do NOT add
+#   `konghq.com/protocol: https` here: if the policy were missing, Kong would
+#   then talk HTTPS *without* verification. Leaving the protocol at its default
+#   makes a missing policy fail closed (plaintext to a TLS-only port).
+# - Load-balancing + active health checks come from KongUpstreamPolicy.
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: pairs-monitor-backend
+  namespace: ${NAMESPACE}
+  labels:
+    app.kubernetes.io/name: pairs-monitor-backend
+    app.kubernetes.io/part-of: pairs-monitor
+  annotations:
+    konghq.com/upstream-policy: "pairs-monitor-backend-policy"
+    konghq.com/connect-timeout: "5000"
+    konghq.com/read-timeout: "60000"
+    konghq.com/write-timeout: "60000"
+    konghq.com/retries: "2"
+spec:
+  type: ClusterIP
+  # No selector on purpose: this Service is backed by external VM addresses.
+  ports:
+    - name: https
+      port: ${BACKEND_PORT}
+      targetPort: ${BACKEND_PORT}
+      protocol: TCP

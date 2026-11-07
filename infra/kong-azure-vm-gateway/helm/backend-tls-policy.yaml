@@ -1,0 +1,34 @@
+# Backend TLS for the VM upstreams.
+#
+# KIC 3.5.x implements BackendTLSPolicy as gateway.networking.k8s.io/v1alpha3
+# (Gateway API 1.3 experimental channel) and requires GatewayAlpha=true.
+# KIC translates it into Kong Service annotations: protocol=https,
+# tls_verify=true, ca_certificates=<CA entity>, host_header=<hostname> and the
+# SNI set from `validation.hostname`. That is why service.yaml does not carry a
+# konghq.com/protocol annotation: without this policy Kong would fail closed.
+#
+# If BackendTLSPolicy is unavailable in your cluster, use the documented
+# fallback in helm/README.md (Service annotations) - never disable verification.
+---
+apiVersion: gateway.networking.k8s.io/v1alpha3
+kind: BackendTLSPolicy
+metadata:
+  name: pairs-monitor-backend-tls
+  namespace: ${NAMESPACE}
+  labels:
+    app.kubernetes.io/part-of: pairs-monitor
+spec:
+  targetRefs:
+    - group: ""
+      kind: Service
+      name: pairs-monitor-backend
+  validation:
+    # SNI sent to the VMs and the identity validated against the certificate SAN.
+    hostname: ${BACKEND_HOSTNAME}
+    caCertificateRefs:
+      - group: ""
+        kind: Secret
+        name: ${CA_SECRET_NAME}
+  options:
+    # leaf -> root. Increase only if an intermediate CA is introduced.
+    tls-verify-depth: "1"

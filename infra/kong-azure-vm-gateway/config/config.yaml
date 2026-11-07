@@ -1,0 +1,103 @@
+# =============================================================================
+# Kong Gateway on AKS - single source of configuration
+# -----------------------------------------------------------------------------
+# Every deployment phase (Terraform, certificates, Helm, validation) reads this
+# file. Replace every <INPUT> and placeholder IP before running anything.
+#
+# NOTE: Azure VNets cannot use 100.64.0.0/10 (CGNAT is reserved). The backend
+#       addresses below are explicit placeholders - replace them with the real
+#       VM NIC IPs once known.
+# =============================================================================
+
+azure:
+  tenant_id: "<INPUT>"
+  subscription_id: "<INPUT>"
+  location: "centralindia"
+
+  resource_group:
+    name: "<INPUT>"
+
+  aks:
+    name: "<INPUT>"
+    resource_group: "<INPUT>"
+    vnet_name: "<INPUT>"
+    vnet_resource_group: "<INPUT>"
+    # CIDR of the subnet used by the Kong internal load balancer (phase 12).
+    ingress_subnet: "<INPUT>"
+
+  private_dns:
+    subscription_id: "<INPUT>"
+    resource_group: "<INPUT>"
+    zone_name: "be.com"
+    ttl: 300
+
+  keyvault:
+    name: "<INPUT>"
+    resource_group: "<INPUT>"
+    # Workload identity used by the Key Vault CSI driver (phase 9).
+    workload_identity_client_id: "<INPUT>"
+
+application:
+  public_hostname: "examplefe.com"
+  backend_hostname: "pairs-monitor.be.com"
+  port: 8100
+  health_endpoint: "/health"
+
+kong:
+  namespace: "kong"
+  release_name: "kong"
+  replicas: 3
+  load_balancing_algorithm: "round-robin"
+  gateway_api_enabled: true
+  ingress_controller_enabled: true
+
+  # Pinned versions - bump only after checking the Kong compatibility matrix.
+  chart_version: "0.24.0"
+  gateway_image: "kong"
+  gateway_image_tag: "3.9.4"
+  ingress_controller_image_tag: "3.5.14"
+  gateway_api_crd_version: "v1.3.0"
+
+  # Secret holding the TLS certificate for the Kong proxy listener
+  # (SAN must contain application.public_hostname; signed by the private CA).
+  proxy_tls_secret_name: "kong-proxy-tls"
+
+  # Secret synced from Key Vault by the CSI driver and consumed by KIC.
+  ca_secret_name: "pairs-monitor-ca"
+
+backends:
+  - name: "vm1"
+    private_ip: "10.20.2.51"
+    port: 8100
+    os: "linux"
+    certificate_name: "pairs-monitor-vm1-tls"
+
+  - name: "vm2"
+    private_ip: "10.20.2.52"
+    port: 8100
+    os: "linux"
+    certificate_name: "pairs-monitor-vm2-tls"
+
+certificates:
+  issuer: "self-signed-private-ca"
+  root_ca_name: "pairs-monitor-root-ca"
+  # Key Vault secret holding a stable UUID. KIC requires a `id` key next to the
+  # PEM in the CA Secret (the value becomes the Kong CA certificate entity ID),
+  # and the CSI driver can only build the Secret from Key Vault objects, so the
+  # UUID is synced as its own Key Vault secret.
+  # No trailing newline in the stored value. Example:
+  #   az keyvault secret set --vault-name <kv> \
+  #     --name pairs-monitor-root-ca-id --value "$(uuidgen)"
+  root_ca_id_name: "pairs-monitor-root-ca-id"
+  key_algorithm: "RSA"
+  key_size: 3072
+  minimum_tls_version: "TLS1.2"
+  renewal_threshold_days: 30
+  server_certificate_validity_days: 365
+
+security:
+  tls_mode: "server-authentication"
+  verify_backend_certificates: true
+  enforce_https: true
+  private_keys_exportable: false
+  use_managed_identity: true

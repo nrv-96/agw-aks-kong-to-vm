@@ -1,0 +1,34 @@
+# Development / low-cost profile. No Azure internal load balancer is created;
+# reach Kong with `kubectl port-forward svc/kong-gateway-proxy 8443:443`.
+gateway:
+  # One replica for the dev profile. Production replicas come from
+  # config/config.yaml -> kong.replicas, which the scripts pass with --set.
+  replicaCount: 1
+
+  proxy:
+    type: ClusterIP
+    annotations: {}
+
+  resources:
+    requests:
+      cpu: 100m
+      memory: 256Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi
+
+  podDisruptionBudget:
+    enabled: false
+
+  # A single replica cannot satisfy a spread constraint; keep it advisory.
+  topologySpreadConstraints: []
+
+controller:
+  ingressController:
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 250m
+        memory: 256Mi

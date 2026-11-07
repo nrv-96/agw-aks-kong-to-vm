@@ -1,0 +1,54 @@
+# Gateway API entry point for Kong.
+#
+# Rendered by scripts/apply-kong-resources.sh (tokens are replaced from
+# config/config.yaml). Do not run `kubectl apply` on the raw file.
+#
+# Prerequisites:
+#   - Gateway API CRDs (experimental channel) v1.3.0 installed
+#   - KIC started with feature_gates=GatewayAlpha=true
+#   - Secret ${PROXY_TLS_SECRET} present in ${NAMESPACE}, containing a
+#     certificate whose SAN covers ${PUBLIC_HOSTNAME} and is signed by the
+#     private root CA that Application Gateway trusts.
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: GatewayClass
+metadata:
+  name: kong
+  annotations:
+    # Unmanaged: Kong Gateway is deployed by the Helm chart, not by KIC.
+    konghq.com/gatewayclass-unmanaged: "true"
+spec:
+  controllerName: konghq.com/kic-gateway-controller
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: pairs-monitor-gateway
+  namespace: ${NAMESPACE}
+  labels:
+    app.kubernetes.io/part-of: pairs-monitor
+spec:
+  gatewayClassName: kong
+  listeners:
+    # HTTPS listener used by Application Gateway (phase 12 reads this address).
+    - name: https
+      hostname: ${PUBLIC_HOSTNAME}
+      port: 443
+      protocol: HTTPS
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - group: ""
+            kind: Secret
+            name: ${PROXY_TLS_SECRET}
+      allowedRoutes:
+        namespaces:
+          from: Same
+    # Plain HTTP listener only serves the 301 redirect defined in httproute.yaml.
+    - name: http
+      hostname: ${PUBLIC_HOSTNAME}
+      port: 80
+      protocol: HTTP
+      allowedRoutes:
+        namespaces:
+          from: Same
