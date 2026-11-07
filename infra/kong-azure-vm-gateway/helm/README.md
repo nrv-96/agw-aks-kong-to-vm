@@ -162,6 +162,21 @@ The CSI driver mounts both files at `/etc/kong/trust` and syncs them into the
 `pairs-monitor-ca` Secret. Only the public CA ever reaches Kong; VM private keys
 are never stored here or mounted into the cluster.
 
+## CSI sync ordering
+
+CSI `secretObjects` are only materialized while a pod mounts the volume. The
+scripts enforce the full chain instead of waiting blindly:
+
+1. `kong-install.sh` applies the `SecretProviderClass` **before** Helm.
+2. After `helm --wait`, `wait_for_csi_secret` checks that the gateway Deployment is
+   Available, a running gateway pod mounts `pairs-monitor-ca`, the matching
+   `SecretProviderClassPodStatus.status.mounted` is `true`, and the synced Secret
+   contains `ca.crt` + `id`.
+3. `apply-kong-resources.sh` repeats the check before applying `BackendTLSPolicy`.
+
+On failure the helper prints the SPC, pod statuses, pod events and CSI driver pods
+instead of timing out silently.
+
 ## CA rotation is not automatic
 
 The CSI driver updates the mounted PEM and the synced Secret, but Kong does not
@@ -196,11 +211,24 @@ helm template kong kong/ingress --version 0.24.0 -n kong \
 
 # After CA rotation
 ./scripts/reload-kong-trust.sh --force
+
+# Runtime assertions against the Kong Admin API (fatal on mismatch)
+./scripts/validate-kong.sh
 ```
+
+`validate-kong.sh` port-forwards to the gateway pod and verifies the actual Kong
+Service/Upstream: `protocol=https`, `tls_verify=true`, `tls_verify_depth=1`, the CA
+entity matching the Secret, exactly the two VM targets, and the active HTTPS
+health-check settings. It fails the deployment instead of trusting Kubernetes object
+creation. Requires `python3`.
 
 ## Validation (phase-1 level)
 
 ```bash
+# Preferred: runtime assertions (fatal on mismatch)
+./scripts/validate-kong.sh
+
+# Kubernetes-level inspection
 kubectl -n kong get deploy,pods,svc
 kubectl -n kong get gateway pairs-monitor-gateway -o yaml
 kubectl -n kong get httproute
@@ -218,7 +246,7 @@ kubectl -n kong exec deploy/kong-gateway -- env \
   | grep -E 'KONG_LUA_SSL_TRUSTED_CERTIFICATE|KONG_HEADERS'
 
 # Kong targets/upstreams (admin API via port-forward)
-kubectl -n kong port-forward svc/kong-gateway-admin 8444:8444
+kubectl -n kong port-forward deploy/kong-gateway 8444:8444
 curl -sk https://localhost:8444/upstreams | jq
 curl -sk https://localhost:8444/upstreams/<id>/health | jq
 ```
@@ -260,6 +288,8 @@ correct, secure behaviour.
 | Both targets unhealthy while proxied requests still work | `KONG_LUA_SSL_TRUSTED_CERTIFICATE` missing `/etc/kong/trust/ca.crt`; the pod must have the CSI mount and `values-csi.yaml` |
 | Kong has no targets | EndpointSlice labels `kubernetes.io/service-name=pairs-monitor-backend`; Service port name matches slice port name |
 | CA Secret never appears | CSI add-on enabled; a gateway pod mounting `/etc/kong/trust` is running; workload identity has `get` on both Key Vault secrets |
+| `wait_for_csi_secret` reports `mounted=true` missing | Workload identity, federated credential or Key Vault RBAC is wrong; inspect the pod and CSI driver logs printed by the helper |
+| `validate-kong.sh` reports protocol/tls_verify mismatch | BackendTLSPolicy accepted but KIC has not reconciled/pushed config yet; inspect KIC logs |
 | `BackendTLSPolicy` not Accepted, KIC logs `missing 'id' field` | CA Secret must contain `id` (UUID) in addition to `ca.crt`; fix the Key Vault `pairs-monitor-root-ca-id` object and restart the gateway pods |
 | Gateway not Programmed | `kubectl -n kong describe gateway pairs-monitor-gateway`; listener cert Secret must exist |
 | Admin API exposed | `network-policy.yaml` applied; admin Service type is ClusterIP/headless |

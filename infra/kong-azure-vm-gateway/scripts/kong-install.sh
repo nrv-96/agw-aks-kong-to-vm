@@ -146,6 +146,12 @@ helm upgrade --install "${RELEASE_NAME}" kong/ingress \
   --wait \
   --timeout 10m
 
+# Do not return until the CSI chain is proven end to end. Helm --wait only proves
+# the pods are Ready; the synced Secret still has to exist for KIC.
+if [[ "${CSI_ENABLED}" == "true" ]]; then
+  wait_for_csi_secret 180
+fi
+
 kubectl_ns get pods -l app.kubernetes.io/instance="${RELEASE_NAME}" -o wide
 
 log "Kong installed. Next: ./scripts/apply-kong-resources.sh --env ${ENV_NAME}"

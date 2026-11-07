@@ -10,13 +10,24 @@
     <version>1.0.0</version>
     <packaging>jar</packaging>
     <name>hello-app</name>
-    <description>Simple Java 21 Hello World HTTP application on port 8100</description>
+    <description>Simple Java 21 Hello World HTTPS application on port 8100</description>
 
     <properties>
         <maven.compiler.release>21</maven.compiler.release>
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <main.class>com.example.hello.HelloApplication</main.class>
+        <junit.version>5.11.4</junit.version>
+        <surefire.version>3.5.2</surefire.version>
     </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>${junit.version}</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
 
     <build>
         <finalName>hello-app</finalName>
@@ -28,6 +39,12 @@
                 <configuration>
                     <release>${maven.compiler.release}</release>
                 </configuration>
+            </plugin>
+
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>${surefire.version}</version>
             </plugin>
 
             <plugin>
@@ -68,6 +85,13 @@
                         <configuration>
                             <fork>true</fork>
                             <executable>C:\Program Files\Java\jdk-21.0.12\bin\javac.exe</executable>
+                        </configuration>
+                    </plugin>
+                    <plugin>
+                        <groupId>org.apache.maven.plugins</groupId>
+                        <artifactId>maven-surefire-plugin</artifactId>
+                        <configuration>
+                            <jvm>C:\Program Files\Java\jdk-21.0.12\bin\java.exe</jvm>
                         </configuration>
                     </plugin>
                 </plugins>

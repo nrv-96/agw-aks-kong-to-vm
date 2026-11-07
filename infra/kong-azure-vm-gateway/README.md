@@ -60,8 +60,9 @@ kong-azure-vm-gateway/
 │   ├── lib.sh                          # config loading + manifest rendering
 │   ├── kong-install.sh                 # CRDs + Helm install (CSI-aware)
 │   ├── kong-upgrade.sh                 # dry run, then gated --yes upgrade
-│   ├── apply-kong-resources.sh         # render/apply Gateway API resources
+│   ├── apply-kong-resources.sh         # render/apply Gateway API resources (fail-closed)
 │   ├── reload-kong-trust.sh            # CA checksum → gateway rollout
+│   ├── validate-kong.sh                # Admin API runtime assertions
 │   └── deploy.sh                       # phase-1 entry point
 └── README.md                           # this file
 ```
@@ -87,15 +88,12 @@ experimental. Bump `config/config.yaml` only after re-checking that matrix.
 ## Prerequisites
 
 - `kubectl` 1.29+ pointed at the target cluster, `helm` 3.14+
-- `yq` v4 (mikefarah), `envsubst` (gettext), `bash` 4+
+- `yq` v4 (mikefarah), `envsubst` (gettext), `python3` (runtime validation), `bash` 4+
 - Azure access for later phases (the phase-1 scripts never call Azure)
 
-`yq` is not installed on this workstation yet:
-
-```powershell
-winget install --id MikeFarah.yq
-# or: choco install yq
-```
+The scripts run in WSL on this workstation; `yq` is installed at `~/bin/yq`.
+On another machine install yq v4 (`winget install --id MikeFarah.yq` or
+`choco install yq`) and ensure `python3` is available for `validate-kong.sh`.
 
 ## Quick start
 
@@ -114,7 +112,7 @@ helm template kong kong/ingress --version 0.24.0 -n kong \
 # 4. Apply Gateway API / backend / TLS resources
 ./scripts/apply-kong-resources.sh --env dev
 
-# 5. One-shot phase-1 deploy (install + apply + trust reload)
+# 5. One-shot phase-1 deploy (install + apply + trust reload + runtime validation)
 ./scripts/deploy.sh --config config/config.yaml --env dev
 ```
 
@@ -155,10 +153,15 @@ Details and the no-Key-Vault CA stand-in are in `helm/README.md`.
 
 - Backend TLS verification cannot be disabled: `BackendTLSPolicy` sets
   `validation.hostname` and `caCertificateRefs`; there is no `tls-verify: false`
-  anywhere. If `BackendTLSPolicy` is unavailable, the documented fallback uses
-  the equivalent Service annotations.
+  anywhere. If the policy is missing or not `Accepted`, the deployment fails.
+- The deployment asserts the **actual Kong runtime** configuration through the Admin
+  API (`protocol=https`, `tls_verify=true`, exact targets, HTTPS health checks) and
+  fails on mismatch; Kubernetes object creation alone is not treated as success.
 - Kong never sees VM private keys: only the public CA certificate is mounted from
   Key Vault.
+- CSI sync is proven, not assumed: install waits for a gateway pod to mount the
+  SecretProviderClass, `SecretProviderClassPodStatus.mounted=true`, and a synced
+  Secret containing `ca.crt` + `id`; failure prints pod/CSI diagnostics.
 - Active HTTPS health checks verify the same private CA: `values-csi.yaml` adds
   `/etc/kong/trust/ca.crt` to `lua_ssl_trusted_certificate` (Kong Service
   `ca_certificates` do not apply to health checks).
@@ -179,8 +182,9 @@ Details and the no-Key-Vault CA stand-in are in `helm/README.md`.
   `reload-kong-trust.sh` after any CA rotation (checksum → rollout).
 - `GatewayAlpha=true` is required in KIC for `BackendTLSPolicy`; it is set in
   `helm/values.yaml`.
-- No cluster was available here: Helm rendering and CRD schema checks were
-  validated locally, but nothing was installed or validated against a live AKS
+- No cluster was available here: Helm rendering, CRD schema checks, shell syntax and
+  the Java tests were validated locally, but `wait_for_csi_secret`, the fail-closed
+  policy checks and `validate-kong.sh` have not been executed against a live AKS
   cluster in this increment.
 
 ## Next phases

@@ -8,6 +8,9 @@ SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 CONFIG_FILE="${CONFIG_FILE:-${PROJECT_DIR}/config/config.yaml}"
 
+# SecretProviderClass that materializes the backend CA Secret.
+CA_SPC_NAME="${CA_SPC_NAME:-pairs-monitor-ca}"
+
 log() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >&2; }
 warn() { log "WARN: $*"; }
 die() { log "ERROR: $*"; exit 1; }
@@ -97,4 +100,106 @@ apply_manifest() {
 
 kubectl_ns() {
   kubectl --namespace "${NAMESPACE}" "$@"
+}
+
+# csi_diagnostics - print the artifacts needed to debug a stuck CSI sync.
+csi_diagnostics() {
+  {
+    echo "--- SecretProviderClass ${CA_SPC_NAME} ---"
+    kubectl_ns get secretproviderclass "${CA_SPC_NAME}" -o yaml || true
+    echo "--- SecretProviderClassPodStatuses ---"
+    kubectl_ns get secretproviderclasspodstatuses -o wide || true
+    echo "--- gateway pods ---"
+    kubectl_ns describe pods \
+      -l "app.kubernetes.io/instance=${RELEASE_NAME},app.kubernetes.io/name=gateway" || true
+    echo "--- recent events ---"
+    kubectl_ns get events --sort-by=.lastTimestamp | tail -n 30 || true
+    echo "--- CSI driver pods ---"
+    kubectl get pods -A -l app=secrets-store-csi-driver -o wide || true
+    kubectl get pods -A -l app=secrets-store-csi-driver-provider-azure -o wide || true
+  } >&2
+}
+
+# wait_for_csi_secret [timeout-seconds]
+#
+# Proves the full CSI sync chain before the CA Secret is consumed:
+#   1. the SecretProviderClass exists;
+#   2. the gateway Deployment is Available;
+#   3. a running gateway pod actually mounts the CSI volume;
+#   4. the CSI driver reports mounted=true for that pod/SPC;
+#   5. the synced Secret contains both `ca.crt` and `id`.
+# Fails with pod events and CSI diagnostics instead of silently timing out.
+wait_for_csi_secret() {
+  local timeout="${1:-180}"
+  local elapsed=0
+  local pod=""
+  local mounted=""
+  local ca_b64=""
+  local id_b64=""
+  local deployment=""
+  local candidate=""
+  local volumes=""
+
+  kubectl_ns get secretproviderclass "${CA_SPC_NAME}" >/dev/null 2>&1 \
+    || die "SecretProviderClass ${CA_SPC_NAME} not found in namespace ${NAMESPACE}"
+
+  deployment="$(kubectl_ns get deployment \
+    -l "app.kubernetes.io/instance=${RELEASE_NAME},app.kubernetes.io/name=gateway" \
+    -o jsonpath='{.items[0].metadata.name}' 2>/dev/null || true)"
+  [[ -n "${deployment}" ]] || die "Kong gateway Deployment not found in namespace ${NAMESPACE}"
+
+  log "CSI: waiting for deployment/${deployment} to be Available"
+  kubectl_ns rollout status "deployment/${deployment}" --timeout="${timeout}s" >/dev/null \
+    || { csi_diagnostics; die "gateway Deployment ${deployment} did not become Available"; }
+
+  log "CSI: waiting for a gateway pod mounting ${CA_SPC_NAME} with mounted=true"
+  while (( elapsed < timeout )); do
+    pod=""
+    while IFS= read -r candidate; do
+      [[ -n "${candidate}" ]] || continue
+      volumes="$(kubectl_ns get pod "${candidate}" \
+        -o jsonpath='{range .spec.volumes[*]}{.name}{"\n"}{end}' 2>/dev/null || true)"
+      if grep -qx "${CA_SPC_NAME}" <<< "${volumes}"; then
+        pod="${candidate}"
+        break
+      fi
+    done < <(kubectl_ns get pods \
+      -l "app.kubernetes.io/instance=${RELEASE_NAME},app.kubernetes.io/name=gateway,app.kubernetes.io/component=app" \
+      -o jsonpath='{range .items[?(@.status.phase=="Running")]}{.metadata.name}{"\n"}{end}' 2>/dev/null || true)
+
+    if [[ -n "${pod}" ]]; then
+      mounted="$(kubectl_ns get secretproviderclasspodstatuses \
+        -o jsonpath='{range .items[*]}{.status.podName}{"|"}{.status.secretProviderClassName}{"|"}{.status.mounted}{"\n"}{end}' \
+        2>/dev/null | grep -F "${pod}|${CA_SPC_NAME}|true" || true)"
+      if [[ -n "${mounted}" ]]; then
+        break
+      fi
+    fi
+
+    sleep 5
+    elapsed=$((elapsed + 5))
+  done
+
+  if [[ -z "${pod}" || -z "${mounted}" ]]; then
+    csi_diagnostics
+    die "CSI did not report ${CA_SPC_NAME} mounted=true on a gateway pod within ${timeout}s"
+  fi
+  log "CSI: ${CA_SPC_NAME} mounted on pod ${pod}"
+
+  elapsed=0
+  while (( elapsed < timeout )); do
+    ca_b64="$(kubectl_ns get secret "${CA_SECRET_NAME}" \
+      -o jsonpath='{.data.ca\.crt}' 2>/dev/null || true)"
+    id_b64="$(kubectl_ns get secret "${CA_SECRET_NAME}" \
+      -o jsonpath='{.data.id}' 2>/dev/null || true)"
+    if [[ -n "${ca_b64}" && -n "${id_b64}" ]]; then
+      log "CSI: secret ${CA_SECRET_NAME} synced (ca.crt + id)"
+      return 0
+    fi
+    sleep 5
+    elapsed=$((elapsed + 5))
+  done
+
+  csi_diagnostics
+  die "CSI secret ${CA_SECRET_NAME} did not contain ca.crt + id within ${timeout}s"
 }

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Phase 1 entry point: deploy the Kong Gateway layer only.
+# Phase 1 entry point: deploy and runtime-validate the Kong Gateway layer.
 #
 # Usage:
 #   ./scripts/deploy.sh --config config/config.yaml [--env prod|dev] [--dry-run]
@@ -70,5 +70,6 @@ fi
 
 "${SCRIPT_DIR}/apply-kong-resources.sh" "${resource_args[@]}"
 "${SCRIPT_DIR}/reload-kong-trust.sh" --config "${CONFIG_FILE}"
+"${SCRIPT_DIR}/validate-kong.sh" --config "${CONFIG_FILE}"
 
-log "Kong layer deployed. Validate listeners/targets, then continue with Terraform + certificate phases."
+log "Kong layer deployed and runtime-validated."

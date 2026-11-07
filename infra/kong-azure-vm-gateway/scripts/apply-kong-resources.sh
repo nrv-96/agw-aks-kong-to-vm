@@ -72,19 +72,9 @@ else
   SKIP_CSI="true"
 fi
 
-# --- CA secret: wait for CSI sync, then make it consumable by KIC ------------
+# --- CA secret: prove the CSI chain, then make it consumable by KIC ----------
 if [[ "${SKIP_CSI}" != "true" ]]; then
-  log "waiting up to ${CA_TIMEOUT}s for CSI to sync secret ${CA_SECRET_NAME}"
-  elapsed=0
-  until kubectl get secret "${CA_SECRET_NAME}" -n "${NAMESPACE}" >/dev/null 2>&1; do
-    if (( elapsed >= CA_TIMEOUT )); then
-      warn "secret ${CA_SECRET_NAME} not synced yet. The CSI driver only syncs while a pod mounting the volume is running."
-      warn "Check: kubectl -n ${NAMESPACE} describe pod -l app.kubernetes.io/component=app"
-      break
-    fi
-    sleep 5
-    elapsed=$((elapsed + 5))
-  done
+  wait_for_csi_secret "${CA_TIMEOUT}"
 fi
 
 # KIC only consumes a CA Secret that is labelled for the kong ingress class AND
@@ -133,11 +123,17 @@ kubectl_ns get endpointslice -l kubernetes.io/service-name=pairs-monitor-backend
 kubectl_ns get gateway,httproute || true
 kubectl_ns get backendtlspolicy || true
 
-log "waiting for Gateway to be programmed"
-kubectl wait --for=condition=Programmed "gateway/pairs-monitor-gateway" -n "${NAMESPACE}" --timeout=180s \
-  || warn "Gateway not Programmed yet; inspect: kubectl -n ${NAMESPACE} describe gateway pairs-monitor-gateway"
+log "waiting for Gateway to be Programmed"
+if ! kubectl wait --for=condition=Programmed "gateway/pairs-monitor-gateway" \
+     -n "${NAMESPACE}" --timeout=180s; then
+  kubectl_ns describe gateway pairs-monitor-gateway >&2 || true
+  die "Gateway pairs-monitor-gateway is not Programmed; refusing to continue"
+fi
+log "Gateway Programmed"
 
 # BackendTLSPolicy status has no top-level conditions in v1alpha3, only ancestors.
+# A rejected policy means Kong would not verify the VM certificates, so this is
+# a hard failure, not a warning.
 log "checking BackendTLSPolicy acceptance"
 btls_status=""
 for _ in $(seq 1 24); do
@@ -148,12 +144,10 @@ for _ in $(seq 1 24); do
   fi
   sleep 5
 done
-if [[ "${btls_status}" == *True* ]]; then
-  log "BackendTLSPolicy accepted - backend TLS verification is active"
-else
-  warn "BackendTLSPolicy not accepted yet (status='${btls_status}')."
-  warn "Check: kubectl -n ${NAMESPACE} describe backendtlspolicy pairs-monitor-backend-tls"
-  warn "Until accepted, Kong talks plaintext to the VM TLS port and requests fail (fail-closed)."
+if [[ "${btls_status}" != *True* ]]; then
+  kubectl_ns describe backendtlspolicy pairs-monitor-backend-tls >&2 || true
+  die "BackendTLSPolicy pairs-monitor-backend-tls is not Accepted (status='${btls_status}'); refusing deployment"
 fi
+log "BackendTLSPolicy accepted - backend TLS verification is active"
 
-log "resources applied. Next: ./scripts/reload-kong-trust.sh (after CA changes) and phase-2 validation scripts."
+log "resources applied. Next: ./scripts/reload-kong-trust.sh (after CA changes), then ./scripts/validate-kong.sh"

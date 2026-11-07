@@ -140,4 +140,8 @@ kubectl_ns rollout status deployment \
   -l app.kubernetes.io/instance="${RELEASE_NAME}",app.kubernetes.io/component=app \
   --timeout=5m
 
-log "upgrade complete; run ./scripts/validate-kong.sh (phase 2) or helm test checks"
+if [[ "${CSI_ENABLED}" == "true" ]]; then
+  wait_for_csi_secret 180
+fi
+
+log "upgrade complete; run ./scripts/validate-kong.sh for runtime assertions"
