@@ -17,6 +17,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.KeyStore;
+import java.security.KeyStoreException;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.concurrent.Executors;
 
 /**
@@ -160,35 +163,49 @@ public final class HelloApplication {
 
         static SSLContext load() throws Exception {
             String keystorePath = setting("TLS_KEYSTORE_PATH", DEFAULT_KEYSTORE);
-            String password = setting("TLS_KEYSTORE_PASSWORD", null);
-            if (password == null || password.isBlank()) {
+            String passwordValue = setting("TLS_KEYSTORE_PASSWORD", null);
+            if (passwordValue == null || passwordValue.isBlank()) {
                 throw new IllegalStateException(
                         "TLS_KEYSTORE_PASSWORD is required; refusing to start without TLS");
             }
-            String keystoreType = setting("TLS_KEYSTORE_TYPE", "PKCS12");
-            String keyAlias = setting("TLS_KEY_ALIAS", null);
 
-            Path keystore = Path.of(keystorePath);
-            if (!Files.isReadable(keystore)) {
-                throw new IllegalStateException("TLS keystore is not readable: " + keystore);
+            // The source String cannot be wiped; clear the mutable working copy.
+            char[] password = passwordValue.toCharArray();
+            try {
+                String keystoreType = setting("TLS_KEYSTORE_TYPE", "PKCS12");                Path keystore = Path.of(keystorePath);
+                if (!Files.isReadable(keystore)) {
+                    throw new IllegalStateException("TLS keystore is not readable: " + keystore);
+                }
+
+                KeyStore store = KeyStore.getInstance(keystoreType);
+                try (InputStream input = Files.newInputStream(keystore)) {
+                    store.load(input, password);
+                }
+                if (!hasPrivateKeyEntry(store)) {
+                    throw new IllegalStateException(
+                            "TLS keystore contains no private-key entry: " + keystore);
+                }
+
+                KeyManagerFactory keyManagers =
+                        KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
+                keyManagers.init(store, password);
+
+                SSLContext sslContext = SSLContext.getInstance("TLS");
+                sslContext.init(keyManagers.getKeyManagers(), null, null);
+                return sslContext;
+            } finally {
+                // Do not leave the keystore password in the heap longer than necessary.
+                Arrays.fill(password, '\0');
             }
+        }
 
-            KeyStore store = KeyStore.getInstance(keystoreType);
-            try (InputStream input = Files.newInputStream(keystore)) {
-                store.load(input, password.toCharArray());
+        private static boolean hasPrivateKeyEntry(KeyStore store) throws KeyStoreException {
+            for (String alias : Collections.list(store.aliases())) {
+                if (store.isKeyEntry(alias)) {
+                    return true;
+                }
             }
-            if (keyAlias != null && !keyAlias.isBlank() && !store.containsAlias(keyAlias)) {
-                throw new IllegalStateException(
-                        "TLS key alias '" + keyAlias + "' not found in " + keystore);
-            }
-
-            KeyManagerFactory keyManagers =
-                    KeyManagerFactory.getInstance(KeyManagerFactory.getDefaultAlgorithm());
-            keyManagers.init(store, password.toCharArray());
-
-            SSLContext sslContext = SSLContext.getInstance("TLS");
-            sslContext.init(keyManagers.getKeyManagers(), null, null);
-            return sslContext;
+            return false;
         }
 
         /**
