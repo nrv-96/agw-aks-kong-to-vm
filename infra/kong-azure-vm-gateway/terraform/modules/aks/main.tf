@@ -16,9 +16,26 @@ variable "authorized_ips" {
   default = []
 }
 variable "private_cluster" { type = bool }
+variable "control_plane_identity_id" { type = string }
+variable "control_plane_identity_principal_id" { type = string }
+variable "kubelet_identity_id" { type = string }
+variable "kubelet_identity_client_id" { type = string }
+variable "kubelet_identity_principal_id" { type = string }
 variable "tags" {
   type    = map(string)
   default = {}
+}
+
+resource "azurerm_role_assignment" "control_plane_network" {
+  scope                = var.vnet_id
+  role_definition_name = "Network Contributor"
+  principal_id         = var.control_plane_identity_principal_id
+}
+
+resource "azurerm_role_assignment" "control_plane_kubelet_operator" {
+  scope                = var.kubelet_identity_id
+  role_definition_name = "Managed Identity Operator"
+  principal_id         = var.control_plane_identity_principal_id
 }
 
 resource "azurerm_kubernetes_cluster" "this" {
@@ -34,12 +51,24 @@ resource "azurerm_kubernetes_cluster" "this" {
   role_based_access_control_enabled = true
   tags                              = var.tags
 
+  depends_on = [
+    azurerm_role_assignment.control_plane_network,
+    azurerm_role_assignment.control_plane_kubelet_operator,
+  ]
+
   api_server_access_profile {
     authorized_ip_ranges = length(var.authorized_ips) > 0 ? var.authorized_ips : []
   }
 
   identity {
-    type = "SystemAssigned"
+    type         = "UserAssigned"
+    identity_ids = [var.control_plane_identity_id]
+  }
+
+  kubelet_identity {
+    client_id                 = var.kubelet_identity_client_id
+    object_id                 = var.kubelet_identity_principal_id
+    user_assigned_identity_id = var.kubelet_identity_id
   }
 
   default_node_pool {
@@ -69,12 +98,6 @@ resource "azurerm_kubernetes_cluster" "this" {
   key_vault_secrets_provider {
     secret_rotation_enabled = true
   }
-}
-
-resource "azurerm_role_assignment" "network" {
-  scope                = var.vnet_id
-  role_definition_name = "Network Contributor"
-  principal_id         = azurerm_kubernetes_cluster.this.identity[0].principal_id
 }
 
 output "name" {

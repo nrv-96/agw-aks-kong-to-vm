@@ -1,10 +1,23 @@
 variable "resource_group_name" { type = string }
 variable "location" { type = string }
 variable "environment" { type = string }
-variable "aks_oidc_issuer_url" { type = string }
 variable "tags" {
   type    = map(string)
   default = {}
+}
+
+resource "azurerm_user_assigned_identity" "aks_control_plane" {
+  name                = "id-aks-control-plane-${var.environment}"
+  location            = var.location
+  resource_group_name = var.resource_group_name
+  tags                = var.tags
+}
+
+resource "azurerm_user_assigned_identity" "aks_kubelet" {
+  name                = "id-aks-kubelet-${var.environment}"
+  location            = var.location
+  resource_group_name = var.resource_group_name
+  tags                = var.tags
 }
 
 resource "azurerm_user_assigned_identity" "csi" {
@@ -14,20 +27,39 @@ resource "azurerm_user_assigned_identity" "csi" {
   tags                = var.tags
 }
 
-resource "azurerm_federated_identity_credential" "csi" {
-  name                = "fic-kong-csi-${var.environment}"
-  resource_group_name = var.resource_group_name
-  parent_id           = azurerm_user_assigned_identity.csi.id
-  audience            = ["api://AzureADTokenExchange"]
-  issuer              = var.aks_oidc_issuer_url
-  subject             = "system:serviceaccount:kong:kong-gateway"
-}
-
 resource "azurerm_user_assigned_identity" "agw" {
   name                = "id-agw-${var.environment}"
   location            = var.location
   resource_group_name = var.resource_group_name
   tags                = var.tags
+}
+
+output "control_plane_identity_id" {
+  value = azurerm_user_assigned_identity.aks_control_plane.id
+}
+
+output "control_plane_identity_client_id" {
+  value = azurerm_user_assigned_identity.aks_control_plane.client_id
+}
+
+output "control_plane_identity_principal_id" {
+  value = azurerm_user_assigned_identity.aks_control_plane.principal_id
+}
+
+output "kubelet_identity_id" {
+  value = azurerm_user_assigned_identity.aks_kubelet.id
+}
+
+output "kubelet_identity_client_id" {
+  value = azurerm_user_assigned_identity.aks_kubelet.client_id
+}
+
+output "kubelet_identity_principal_id" {
+  value = azurerm_user_assigned_identity.aks_kubelet.principal_id
+}
+
+output "workload_identity_id" {
+  value = azurerm_user_assigned_identity.csi.id
 }
 
 output "workload_identity_client_id" {

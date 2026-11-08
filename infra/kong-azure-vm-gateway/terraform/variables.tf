@@ -54,11 +54,6 @@ variable "vm_subnet_cidr" {
   default = "10.20.2.0/24"
 }
 
-variable "pe_subnet_cidr" {
-  type    = string
-  default = "10.20.3.0/24"
-}
-
 variable "agw_subnet_cidr" {
   type    = string
   default = "10.20.4.0/24"

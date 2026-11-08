@@ -17,6 +17,13 @@
 gateway:
   enabled: true
 
+  # Pin the ServiceAccount name so the federated credential subject is stable:
+  # system:serviceaccount:kong:kong-gateway
+  deployment:
+    serviceAccount:
+      create: true
+      name: kong-gateway
+
   # Three data-plane replicas. KIC itself is a single leader-elected deployment
   # in the official chart (not a data path component).
   replicaCount: 3

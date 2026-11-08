@@ -4,7 +4,6 @@ variable "vnet_name" { type = string }
 variable "vnet_cidr" { type = string }
 variable "aks_subnet_cidr" { type = string }
 variable "vm_subnet_cidr" { type = string }
-variable "pe_subnet_cidr" { type = string }
 variable "agw_subnet_cidr" { type = string }
 variable "enable_nat_gateway" { type = bool }
 variable "tags" {
@@ -34,13 +33,6 @@ resource "azurerm_subnet" "vm" {
   address_prefixes     = [var.vm_subnet_cidr]
 }
 
-resource "azurerm_subnet" "pe" {
-  name                 = "snet-pe"
-  resource_group_name  = var.resource_group_name
-  virtual_network_name = azurerm_virtual_network.this.name
-  address_prefixes     = [var.pe_subnet_cidr]
-}
-
 resource "azurerm_subnet" "agw" {
   name                 = "snet-agw"
   resource_group_name  = var.resource_group_name
@@ -58,13 +50,6 @@ resource "azurerm_network_security_group" "aks" {
 
 resource "azurerm_network_security_group" "vm" {
   name                = "nsg-vm"
-  location            = var.location
-  resource_group_name = var.resource_group_name
-  tags                = var.tags
-}
-
-resource "azurerm_network_security_group" "pe" {
-  name                = "nsg-pe"
   location            = var.location
   resource_group_name = var.resource_group_name
   tags                = var.tags
@@ -231,20 +216,6 @@ resource "azurerm_network_security_rule" "vm_out_https" {
   network_security_group_name = azurerm_network_security_group.vm.name
 }
 
-resource "azurerm_network_security_rule" "pe_in_vnet" {
-  name                        = "allow-vnet-https"
-  priority                    = 100
-  direction                   = "Inbound"
-  access                      = "Allow"
-  protocol                    = "Tcp"
-  source_port_range           = "*"
-  destination_port_range      = "443"
-  source_address_prefix       = "VirtualNetwork"
-  destination_address_prefix  = "*"
-  resource_group_name         = var.resource_group_name
-  network_security_group_name = azurerm_network_security_group.pe.name
-}
-
 resource "azurerm_network_security_rule" "agw_in_web" {
   name                        = "allow-web"
   priority                    = 100
@@ -318,11 +289,6 @@ resource "azurerm_network_security_rule" "agw_out_internet" {
 resource "azurerm_subnet_network_security_group_association" "aks" {
   subnet_id                 = azurerm_subnet.aks.id
   network_security_group_id = azurerm_network_security_group.aks.id
-}
-
-resource "azurerm_subnet_network_security_group_association" "pe" {
-  subnet_id                 = azurerm_subnet.pe.id
-  network_security_group_id = azurerm_network_security_group.pe.id
 }
 
 resource "azurerm_subnet_network_security_group_association" "agw" {

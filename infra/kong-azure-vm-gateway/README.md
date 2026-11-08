@@ -75,6 +75,7 @@ kong-azure-vm-gateway/
 │   ├── apply-kong-resources.sh         # render/apply Gateway API resources (fail-closed)
 │   ├── reload-kong-trust.sh            # CA checksum → gateway rollout
 │   ├── validate-kong.sh                # Admin API runtime assertions
+│   ├── verify-helm-workload-identity.sh # rendered SA/pod workload-identity assertions
 │   └── deploy.sh                       # phase-1 entry point
 └── README.md                           # this file
 ```
@@ -254,15 +255,24 @@ Details and the no-Key-Vault CA stand-in are in `helm/README.md`.
 | # | Module | Creates |
 |---|---|---|
 | 01 | `resource-group` | resource group (create or reuse) |
-| 02 | `network` | VNet, `snet-aks`, `snet-vm`, `snet-pe`, `snet-agw`, NSGs/rules, NAT gateway |
+| 02 | `network` | VNet, `snet-aks`, `snet-vm`, `snet-agw`, NSGs/rules, NAT gateway |
 | 03 | `private-dns` | private zone `internal.example.com`, A record `be`, VNet link |
 | 04 | `vm` | 2 NICs, 2 Ubuntu 24.04 VMs, static private IPs, no public IPs, Java 21 cloud-init, password auth, patch mode |
 | 05 | `key-vault` | Key Vault with RBAC authorization, public access, purge protection; secret contents are script-managed |
-| 06 | `identity` | AKS workload UAMI + federated credential and AGW UAMI |
-| 07 | `aks` | AKS Free tier, CNI Overlay, OIDC + workload identity, Key Vault CSI provider, single `Standard_B4ms` node with autoscale |
+| 06 | `identity` | AKS control-plane, kubelet, Kong CSI and AGW UAMIs; federated credential created after AKS |
+| 07 | `aks` | AKS Free tier, CNI Overlay, OIDC + workload identity, user-assigned control-plane + kubelet identities, CSI provider, single `Standard_B4ms` node with autoscale |
 | 08 | `application-gateway` | Standard_v2, static public IP, HTTPS listener, Kong backend pool, private-root trust, `/health` probe |
 
-No observability, backup, WAF or private endpoints by request.
+No observability, backup, WAF or private endpoints by request. The Private
+Endpoint subnet/NSG are deferred until Key Vault private connectivity is
+implemented.
+
+AKS uses separate user-assigned control-plane, kubelet, Kong CSI and AGW
+identities. The control-plane identity gets `Network Contributor` on the VNet and
+`Managed Identity Operator` on the kubelet identity before AKS is created. The
+federated credential subject is `system:serviceaccount:kong:kong-gateway`; Helm
+pins that ServiceAccount, adds the `azure.workload.identity/use` pod label, injects
+the client-id annotation and verifies the rendered chart.
 
 ### DNS and local trust
 

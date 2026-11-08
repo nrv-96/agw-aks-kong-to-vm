@@ -26,7 +26,6 @@ module "network" {
   vnet_cidr           = var.vnet_cidr
   aks_subnet_cidr     = var.aks_subnet_cidr
   vm_subnet_cidr      = var.vm_subnet_cidr
-  pe_subnet_cidr      = var.pe_subnet_cidr
   agw_subnet_cidr     = var.agw_subnet_cidr
   enable_nat_gateway  = var.enable_nat_gateway
   tags                = local.tags
@@ -75,7 +74,14 @@ module "aks" {
   node_max_count  = var.node_max_count
   authorized_ips  = var.aks_authorized_ip_ranges
   private_cluster = var.aks_private_cluster
-  tags            = local.tags
+
+  control_plane_identity_id           = module.identity.control_plane_identity_id
+  control_plane_identity_principal_id = module.identity.control_plane_identity_principal_id
+  kubelet_identity_id                 = module.identity.kubelet_identity_id
+  kubelet_identity_client_id          = module.identity.kubelet_identity_client_id
+  kubelet_identity_principal_id       = module.identity.kubelet_identity_principal_id
+
+  tags = local.tags
 }
 
 module "identity" {
@@ -84,8 +90,16 @@ module "identity" {
   resource_group_name = local.rg_name
   location            = local.location
   environment         = var.environment
-  aks_oidc_issuer_url = module.aks.oidc_issuer_url
   tags                = local.tags
+}
+
+resource "azurerm_federated_identity_credential" "csi" {
+  name                = "fic-kong-csi-${var.environment}"
+  resource_group_name = local.rg_name
+  parent_id           = module.identity.workload_identity_id
+  audience            = ["api://AzureADTokenExchange"]
+  issuer              = module.aks.oidc_issuer_url
+  subject             = "system:serviceaccount:kong:kong-gateway"
 }
 
 resource "random_password" "admin" {

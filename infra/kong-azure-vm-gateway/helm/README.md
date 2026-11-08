@@ -25,7 +25,7 @@ Upgrades are intentionally not automated to "latest": bump these pins in
 | `values.yaml` | Shared chart values: 3 replicas, DB-less, admin TLS + headless Service, proxy 80/443, PDB, zone spreading, probes, graceful shutdown |
 | `values-dev.yaml` | 1 replica, internal Azure LoadBalancer (static IP from config), no PDB |
 | `values-prod.yaml` | Internal Azure LB annotations, anti-affinity, larger resources, PDB `minAvailable: 2` |
-| `values-csi.yaml` | Key Vault CSI volume/mount for the CA trust store plus the health-check Lua trust bundle; added only when the driver exists |
+| `values-csi.yaml` | Key Vault CSI CA volume, health-check trust bundle and workload-identity pod label; added only when the driver exists |
 | `gateway.yaml` | `GatewayClass` (unmanaged) + `Gateway` with HTTPS/HTTP listeners |
 | `httproute.yaml` | HTTPS route to the backend Service + HTTP→HTTPS 301 redirect |
 | `service.yaml` | Selector-less Service `pairs-monitor-backend` with Kong annotations |
@@ -176,6 +176,22 @@ scripts enforce the full chain instead of waiting blindly:
 
 On failure the helper prints the SPC, pod statuses, pod events and CSI driver pods
 instead of timing out silently.
+
+## AKS workload identity
+
+The Key Vault CSI integration requires all three of the following:
+
+- the gateway ServiceAccount is pinned to `kong-gateway` (`values.yaml`), matching
+  the Terraform federated subject `system:serviceaccount:kong:kong-gateway`;
+- `values-csi.yaml` adds the pod label `azure.workload.identity/use: "true"`;
+- `kong-install.sh` / `kong-upgrade.sh` inject
+  `azure.workload.identity/client-id=<UAMI client ID>` onto the ServiceAccount from
+  `config/config.yaml` using `--set-string`.
+
+`scripts/verify-helm-workload-identity.sh` renders the chart and asserts all three
+before Helm install/upgrade. If any item is missing, the deployment stops early.
+The CSI drive also needs the Terraform `Key Vault Secrets User` role; that is created
+by the identity stack, not the chart.
 
 ## CA rotation is not automatic
 

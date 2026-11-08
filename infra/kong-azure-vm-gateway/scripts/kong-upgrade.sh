@@ -102,7 +102,12 @@ if [[ "${ENV_NAME}" == "prod" ]]; then
 fi
 
 if [[ "${CSI_ENABLED}" == "true" ]]; then
+  [[ -n "${WORKLOAD_IDENTITY_CLIENT_ID}" ]] \
+    || die "CSI is enabled but azure.keyvault.workload_identity_client_id is empty"
   helm_args+=(--values "${PROJECT_DIR}/helm/values-csi.yaml")
+  helm_args+=(
+    --set-string "gateway.deployment.serviceAccount.annotations.azure\.workload\.identity/client-id=${WORKLOAD_IDENTITY_CLIENT_ID}"
+  )
 fi
 
 log "target chart=${CHART_VERSION} gateway=${KONG_GATEWAY_IMAGE}:${GATEWAY_TAG} KIC=${KIC_TAG_ARG} csi=${CSI_ENABLED}"
@@ -115,6 +120,14 @@ fi
 
 helm repo add kong https://charts.konghq.com --force-update >/dev/null
 helm repo update kong >/dev/null
+
+RENDER_FILE="$(mktemp)"
+trap 'rm -f "${RENDER_FILE}"' EXIT
+helm template "${RELEASE_NAME}" kong/ingress "${helm_args[@]}" > "${RENDER_FILE}"
+if [[ "${CSI_ENABLED}" == "true" ]]; then
+  bash "${SCRIPT_DIR}/verify-helm-workload-identity.sh" \
+    "${RENDER_FILE}" "${WORKLOAD_IDENTITY_CLIENT_ID}"
+fi
 
 log "server-side dry run"
 helm upgrade "${RELEASE_NAME}" kong/ingress \

@@ -60,7 +60,6 @@ data = {
     "vnet_cidr": clean(network.get("vnet_cidr"), "10.20.0.0/16"),
     "aks_subnet_cidr": clean(network.get("aks_subnet_cidr"), "10.20.1.0/24"),
     "vm_subnet_cidr": clean(network.get("vm_subnet_cidr"), "10.20.2.0/24"),
-    "pe_subnet_cidr": clean(network.get("pe_subnet_cidr"), "10.20.3.0/24"),
     "agw_subnet_cidr": clean(network.get("agw_subnet_cidr"), "10.20.4.0/24"),
     "pod_cidr": clean(network.get("pod_cidr"), "10.244.0.0/16"),
     "service_cidr": clean(network.get("service_cidr"), "10.96.0.0/16"),

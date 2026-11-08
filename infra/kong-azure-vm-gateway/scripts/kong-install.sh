@@ -94,7 +94,6 @@ install_gateway_api_crds() {
 
 helm_args=(
   --namespace "${NAMESPACE}"
-  --create-namespace
   --version "${KONG_CHART_VERSION}"
   --values "${PROJECT_DIR}/helm/values.yaml"
   --values "${VALUES_FILE}"
@@ -112,6 +111,9 @@ fi
 
 if [[ "${CSI_ENABLED}" == "true" ]]; then
   helm_args+=(--values "${PROJECT_DIR}/helm/values-csi.yaml")
+  helm_args+=(
+    --set-string "gateway.deployment.serviceAccount.annotations.azure\.workload\.identity/client-id=${WORKLOAD_IDENTITY_CLIENT_ID}"
+  )
 fi
 
 log "Kong chart ${KONG_CHART_VERSION} | gateway ${KONG_GATEWAY_IMAGE}:${KONG_GATEWAY_TAG} | KIC ${KIC_TAG}"
@@ -120,9 +122,21 @@ log "namespace=${NAMESPACE} release=${RELEASE_NAME} env=${ENV_NAME} replicas=${R
 helm repo add kong https://charts.konghq.com --force-update >/dev/null
 helm repo update kong >/dev/null
 
+RENDER_FILE="$(mktemp)"
+trap 'rm -f "${RENDER_FILE}"' EXIT
+helm template "${RELEASE_NAME}" kong/ingress "${helm_args[@]}" > "${RENDER_FILE}"
+
+if [[ "${CSI_ENABLED}" == "true" ]]; then
+  bash "${SCRIPT_DIR}/verify-helm-workload-identity.sh" \
+    "${RENDER_FILE}" "${WORKLOAD_IDENTITY_CLIENT_ID}"
+fi
+
 if [[ "${DRY_RUN}" == "true" ]]; then
-  helm template "${RELEASE_NAME}" kong/ingress "${helm_args[@]}" >/dev/null
-  log "dry run OK (helm template rendered successfully)"
+  if [[ "${CSI_ENABLED}" == "true" ]]; then
+    log "dry run OK (helm template rendered and workload identity asserted)"
+  else
+    log "dry run OK (helm template rendered)"
+  fi
   exit 0
 fi
 
@@ -143,6 +157,7 @@ fi
 log "installing/upgrading release ${RELEASE_NAME}"
 helm upgrade --install "${RELEASE_NAME}" kong/ingress \
   "${helm_args[@]}" \
+  --create-namespace \
   --atomic \
   --wait \
   --timeout 10m

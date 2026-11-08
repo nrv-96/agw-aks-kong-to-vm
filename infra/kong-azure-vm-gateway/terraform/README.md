@@ -8,15 +8,17 @@ do not commit `terraform.tfstate`, `terraform.tfvars.json` or `vm-admin-password
 | # | Module | Resources |
 |---|---|---|
 | 01 | `resource-group` | RG (create or reuse) |
-| 02 | `network` | VNet, `snet-aks`, `snet-vm`, `snet-pe`, `snet-agw`, NSGs/rules, NAT gateway |
+| 02 | `network` | VNet, `snet-aks`, `snet-vm`, `snet-agw`, NSGs/rules, NAT gateway |
 | 03 | `private-dns` | `internal.example.com`, A record `be` -> both VM IPs, VNet link |
 | 04 | `vm` | 2 NICs, 2 Ubuntu 24.04 VMs, static IPs, no public IPs, Java 21 cloud-init, password auth, patch mode |
 | 05 | `key-vault` | KV, RBAC authorization, public access, purge protection (no private endpoint) |
-| 06 | `identity` | AKS workload UAMI + federated credential, AGW UAMI |
-| 07 | `aks` | AKS Free tier, CNI Overlay, OIDC + workload identity, CSI provider, B4ms autoscale |
+| 06 | `identity` | AKS control-plane, kubelet, Kong CSI and AGW UAMIs; federated credential created after AKS |
+| 07 | `aks` | AKS Free tier, CNI Overlay, OIDC + workload identity, user-assigned control-plane + kubelet identities, CSI provider, B4ms autoscale |
 | 08 | `application-gateway` | Standard_v2, public IP, HTTPS listener, Kong backend, private-root trust, /health probe |
 
-No observability, backup, WAF or private endpoints (by request).
+No observability, backup, WAF or private endpoints (by request). The Private
+Endpoint subnet/NSG were removed; add them when Key Vault private connectivity is
+implemented.
 
 ## Naming and DNS
 
