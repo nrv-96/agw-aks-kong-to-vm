@@ -12,7 +12,7 @@ set -euo pipefail
 
 OUT_DIR="."
 NAME="vm1"
-CN="pairs-monitor.be.com"
+CN="be.internal.example.com"
 SAN=""
 KEY_SIZE="3072"
 FORCE="false"

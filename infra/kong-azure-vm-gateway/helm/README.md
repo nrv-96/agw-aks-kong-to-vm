@@ -23,7 +23,7 @@ Upgrades are intentionally not automated to "latest": bump these pins in
 | File | Purpose |
 | --- | --- |
 | `values.yaml` | Shared chart values: 3 replicas, DB-less, admin TLS + headless Service, proxy 80/443, PDB, zone spreading, probes, graceful shutdown |
-| `values-dev.yaml` | 1 replica, ClusterIP proxy (port-forward), no PDB |
+| `values-dev.yaml` | 1 replica, internal Azure LoadBalancer (static IP from config), no PDB |
 | `values-prod.yaml` | Internal Azure LB annotations, anti-affinity, larger resources, PDB `minAvailable: 2` |
 | `values-csi.yaml` | Key Vault CSI volume/mount for the CA trust store plus the health-check Lua trust bundle; added only when the driver exists |
 | `gateway.yaml` | `GatewayClass` (unmanaged) + `Gateway` with HTTPS/HTTP listeners |
@@ -33,7 +33,7 @@ Upgrades are intentionally not automated to "latest": bump these pins in
 | `backend-tls-policy.yaml` | SNI + CA + hostname verification for the VM upstreams |
 | `kong-upstream-policy.yaml` | Round-robin + active/passive HTTPS health checks |
 | `secret-provider-class.yaml` | Key Vault → CSI → `pairs-monitor-ca` Secret (`ca.crt` + `id`) and `/etc/kong/trust` mount |
-| `network-policy.yaml` | Admin API reachable only from KIC |
+| `network-policy.yaml` | Admin API NetworkPolicy manifest (enforcement requires a CNI policy engine; this AKS cluster uses `network_policy = none`) |
 
 `helm/*.yaml` manifests contain `${TOKEN}` placeholders and are rendered from
 `config/config.yaml` by `scripts/apply-kong-resources.sh`. Do not `kubectl apply`
@@ -42,26 +42,26 @@ them directly.
 ## Traffic and TLS flow
 
 ```
-Browser ──HTTPS(examplefe.com)──► Application Gateway (phase 12)
+Browser ──HTTPS(fe.internal.example.com)──► Application Gateway (phase 12)
                                    │ HTTPS, trusts private root CA
                                    ▼
-                        Kong Gateway :443 (cert SAN examplefe.com)
+                        Kong Gateway :443 (cert SAN fe.internal.example.com)
                                    │ Gateway API HTTPRoute
                                    ▼
                         Service pairs-monitor-backend:8100
                           protocol=https, tls_verify=true
-                          SNI + hostname = pairs-monitor.be.com
+                          SNI + hostname = be.internal.example.com
                           CA = pairs-monitor-ca (from Key Vault)
                                    │
                     ┌──────────────┴──────────────┐
                  VM1 10.20.2.51:8100          VM2 10.20.2.52:8100
-                 cert SAN pairs-monitor.be.com (phase 2)
+                 cert SAN be.internal.example.com (phase 2)
 ```
 
 Two distinct identities are used on purpose:
 
-- public: `examplefe.com`
-- backend TLS: `pairs-monitor.be.com`
+- public: `fe.internal.example.com`
+- backend TLS: `be.internal.example.com`
 
 ## Why BackendTLSPolicy
 
@@ -72,7 +72,7 @@ targets are raw VM IPs:
 
 ```yaml
 validation:
-  hostname: pairs-monitor.be.com      # SNI + certificate identity
+  hostname: be.internal.example.com      # SNI + certificate identity
   caCertificateRefs: [Secret/pairs-monitor-ca]
 options:
   tls-verify-depth: "1"               # leaf -> root
@@ -114,7 +114,7 @@ konghq.com/protocol: https
 konghq.com/tls-verify: "true"
 konghq.com/tls-verify-depth: "1"
 konghq.com/ca-certificates-secrets: pairs-monitor-ca
-konghq.com/host-header: pairs-monitor.be.com
+konghq.com/host-header: be.internal.example.com
 ```
 
 Do **not** enable both mechanisms for the same Service, and never set
@@ -126,7 +126,7 @@ Do **not** enable both mechanisms for the same Service, and never set
 
 - `algorithm: round-robin`
 - active HTTPS checks: `GET /health` on port 8100
-- `httpsSni: pairs-monitor.be.com`, `httpsVerifyCertificate: true`
+- `httpsSni: be.internal.example.com`, `httpsVerifyCertificate: true`
 - healthy: 2 successes / 10s interval; unhealthy: 3 failures, 3 timeouts / 10s
 - passive checks also enabled
 - unhealthy targets are removed from rotation and re-added after recovery
@@ -252,7 +252,7 @@ curl -sk https://localhost:8444/upstreams/<id>/health | jq
 ```
 
 Expected Kong upstream: protocol `https`, both VM IPs as targets, TLS
-verification enabled, SNI `pairs-monitor.be.com`, health path `/health`.
+verification enabled, SNI `be.internal.example.com`, health path `/health`.
 
 ## Dev bootstrap without phase 2 certificates
 
@@ -260,7 +260,7 @@ For a local smoke test only, create throwaway certs:
 
 ```bash
 openssl req -x509 -newkey rsa:3072 -nodes -days 7 \
-  -subj "/CN=examplefe.com" -addext "subjectAltName=DNS:examplefe.com" \
+  -subj "/CN=fe.internal.example.com" -addext "subjectAltName=DNS:fe.internal.example.com" \
   -keyout kong-proxy.key -out kong-proxy.crt
 
 kubectl create secret tls kong-proxy-tls -n kong \
@@ -276,7 +276,7 @@ kubectl label secret pairs-monitor-ca -n kong konghq.com/ca-cert=true --overwrit
 ```
 
 Backend HTTPS will keep failing verification until phase 2 issues certificates
-with SAN `pairs-monitor.be.com` from the private root CA. That failure is the
+with SAN `be.internal.example.com` from the private root CA. That failure is the
 correct, secure behaviour.
 
 ## Troubleshooting
@@ -292,4 +292,4 @@ correct, secure behaviour.
 | `validate-kong.sh` reports protocol/tls_verify mismatch | BackendTLSPolicy accepted but KIC has not reconciled/pushed config yet; inspect KIC logs |
 | `BackendTLSPolicy` not Accepted, KIC logs `missing 'id' field` | CA Secret must contain `id` (UUID) in addition to `ca.crt`; fix the Key Vault `pairs-monitor-root-ca-id` object and restart the gateway pods |
 | Gateway not Programmed | `kubectl -n kong describe gateway pairs-monitor-gateway`; listener cert Secret must exist |
-| Admin API exposed | `network-policy.yaml` applied; admin Service type is ClusterIP/headless |
+| Admin API exposed | `network-policy.yaml` is not enforced with `network_policy=none`; keep the admin Service ClusterIP/headless and never expose it publicly |

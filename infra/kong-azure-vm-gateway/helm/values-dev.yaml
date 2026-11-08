@@ -1,13 +1,16 @@
-# Development / low-cost profile. No Azure internal load balancer is created;
-# reach Kong with `kubectl port-forward svc/kong-gateway-proxy 8443:443`.
+# Development / low-cost profile for the single-node AKS environment.
+# The internal Azure LoadBalancer is required by Application Gateway; the static
+# private IP is injected by kong-install.sh from config.kong.internal_lb_ip.
+# For a local kind cluster, override proxy.type=ClusterIP and port-forward.
 gateway:
   # One replica for the dev profile. Production replicas come from
   # config/config.yaml -> kong.replicas, which the scripts pass with --set.
   replicaCount: 1
 
   proxy:
-    type: ClusterIP
-    annotations: {}
+    type: LoadBalancer
+    annotations:
+      service.beta.kubernetes.io/azure-load-balancer-internal: "true"
 
   resources:
     requests:

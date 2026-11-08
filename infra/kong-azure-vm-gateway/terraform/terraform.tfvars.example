@@ -1,0 +1,56 @@
+# Copy to terraform.tfvars or generate terraform.tfvars.json with
+# ../scripts/terraform-config.sh.
+subscription_id           = "0a457f9a-0b37-4bc0-b7b3-2f712bdb361a"
+resource_group_name       = "rg-pairs-monitor-dev"
+create_resource_group     = true
+location                  = "eastus"
+environment               = "dev"
+tags                      = {}
+
+vnet_name                 = "vnet-pairs-monitor-dev"
+vnet_cidr                 = "10.20.0.0/16"
+aks_subnet_cidr           = "10.20.1.0/24"
+vm_subnet_cidr            = "10.20.2.0/24"
+pe_subnet_cidr            = "10.20.3.0/24"
+agw_subnet_cidr           = "10.20.4.0/24"
+pod_cidr                  = "10.244.0.0/16"
+service_cidr              = "10.96.0.0/16"
+dns_service_ip            = "10.96.0.10"
+enable_nat_gateway        = true
+
+frontend_hostname         = "fe.internal.example.com"
+backend_hostname          = "be.internal.example.com"
+internal_dns_zone         = "internal.example.com"
+backend_dns_record        = "be"
+dns_ttl                   = 300
+kong_internal_lb_ip       = "10.20.1.250"
+
+vm1_ip                    = "10.20.2.51"
+vm2_ip                    = "10.20.2.52"
+admin_username            = "azureuser"
+vm_size                   = "Standard_B2s"
+vm_image_publisher        = "Canonical"
+vm_image_offer            = "ubuntu-24_04-lts"
+vm_image_sku              = "server-gen2"
+vm_image_version          = "latest"
+os_disk_type              = "Standard_LRS"
+os_disk_size_gb           = 30
+
+aks_name                  = "aks-pairs-monitor-dev"
+kubernetes_version        = "1.33"
+node_vm_size              = "Standard_B4ms"
+node_min_count            = 1
+node_max_count            = 2
+aks_authorized_ip_ranges  = []
+aks_private_cluster       = false
+
+key_vault_name              = ""
+key_vault_allowed_ip_ranges = []
+key_vault_purge_protection  = true
+
+enable_application_gateway = false
+agw_name                   = "agw-pairs-monitor-dev"
+agw_public_ip_name         = "pip-agw-pairs-monitor-dev"
+agw_capacity               = 1
+agw_certificate_secret_id  = ""
+root_ca_cert_path          = "../pki/root-ca.crt"

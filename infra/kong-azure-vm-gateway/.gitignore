@@ -28,6 +28,10 @@ config/*.local.yaml
 *.tfplan
 crash.log
 crash.*.log
+terraform/terraform.tfvars.json
+terraform/terraform.tfvars
+terraform/vm-admin-password.txt
+terraform/generated/
 
 # --- rendered / generated output -------------------------------------------
 rendered/

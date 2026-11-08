@@ -107,7 +107,7 @@ curl -v http://localhost:8100/   # connection reset / TLS error
 On each VM the automation will:
 
 1. generate the private key **on the VM** and submit only a CSR,
-2. install the signed certificate (SAN `DNS:pairs-monitor.be.com`) + chain,
+2. install the signed certificate (SAN `DNS:be.internal.example.com`) + chain,
 3. create `/etc/hello/tls/keystore.p12` with `openssl pkcs12`,
 4. start the app with `TLS_KEYSTORE_PATH` and `TLS_KEYSTORE_PASSWORD` supplied via a
    `0600` systemd `EnvironmentFile`.

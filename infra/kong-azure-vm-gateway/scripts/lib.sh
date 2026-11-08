@@ -62,6 +62,7 @@ load_kong_config() {
   KONG_GATEWAY_TAG="$(cfg_required '.kong.gateway_image_tag')"
   KIC_TAG="$(cfg_required '.kong.ingress_controller_image_tag')"
   GATEWAY_API_CRD_VERSION="$(cfg_required '.kong.gateway_api_crd_version')"
+  INTERNAL_LB_IP="$(cfg_required '.kong.internal_lb_ip')"
   PROXY_TLS_SECRET="$(cfg_required '.kong.proxy_tls_secret_name')"
   CA_SECRET_NAME="$(cfg_required '.kong.ca_secret_name')"
   ROOT_CA_OBJECT="$(cfg_required '.certificates.root_ca_name')"
@@ -80,7 +81,8 @@ load_kong_config() {
   export NAMESPACE RELEASE_NAME PUBLIC_HOSTNAME BACKEND_HOSTNAME BACKEND_PORT \
     HEALTH_PATH KONG_CHART_VERSION KONG_GATEWAY_IMAGE KONG_GATEWAY_TAG KIC_TAG \
     GATEWAY_API_CRD_VERSION PROXY_TLS_SECRET CA_SECRET_NAME KEYVAULT_NAME \
-    TENANT_ID ROOT_CA_OBJECT ROOT_CA_ID_OBJECT VM1_IP VM2_IP WORKLOAD_IDENTITY_CLIENT_ID
+    TENANT_ID ROOT_CA_OBJECT ROOT_CA_ID_OBJECT VM1_IP VM2_IP WORKLOAD_IDENTITY_CLIENT_ID \
+    INTERNAL_LB_IP
 }
 
 # render <file> - substitute the manifest token set from config.yaml.

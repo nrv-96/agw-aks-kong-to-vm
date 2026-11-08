@@ -2,13 +2,13 @@
 # Restart hello-app and validate its local HTTPS health endpoint.
 #
 # Usage:
-#   ./vm/reload-application.sh [--service hello-app] [--hostname pairs-monitor.be.com]
+#   ./vm/reload-application.sh [--service hello-app] [--hostname be.internal.example.com]
 #       [--port 8100] [--ca /etc/hello/tls/ca.crt] [--timeout 30]
 #       [--root-prefix /] [--no-systemctl]
 set -euo pipefail
 
 SERVICE="hello-app"
-HOSTNAME="pairs-monitor.be.com"
+HOSTNAME="be.internal.example.com"
 PORT="8100"
 CA="/etc/hello/tls/ca.crt"
 TIMEOUT="30"

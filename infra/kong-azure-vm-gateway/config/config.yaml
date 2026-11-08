@@ -2,44 +2,98 @@
 # Kong Gateway on AKS - single source of configuration
 # -----------------------------------------------------------------------------
 # Every deployment phase (Terraform, certificates, Helm, validation) reads this
-# file. Replace every <INPUT> and placeholder IP before running anything.
+# file. Replace every <INPUT> before running anything. Terraform-generated
+# values (Key Vault name, workload identity client ID, tenant ID, AGW IP) are
+# written back by scripts/sync-terraform-outputs.sh.
 #
-# NOTE: Azure VNets cannot use 100.64.0.0/10 (CGNAT is reserved). The backend
-#       addresses below are explicit placeholders - replace them with the real
-#       VM NIC IPs once known.
+# NOTE: Azure VNets cannot use 100.64.0.0/10 (CGNAT is reserved).
 # =============================================================================
 
 azure:
   tenant_id: "<INPUT>"
-  subscription_id: "<INPUT>"
-  location: "centralindia"
+  subscription_id: "0a457f9a-0b37-4bc0-b7b3-2f712bdb361a"
+  subscription_name: "prod"
+  environment: "dev"
+  location: "eastus"
 
   resource_group:
-    name: "<INPUT>"
+    name: "rg-pairs-monitor-dev"
+
+  network:
+    vnet_name: "vnet-pairs-monitor-dev"
+    vnet_cidr: "10.20.0.0/16"
+    # CNI Overlay: pods use the pod CIDR, not the VNet, so the internal LB
+    # static IP can safely live in the AKS subnet.
+    aks_subnet_cidr: "10.20.1.0/24"
+    vm_subnet_cidr: "10.20.2.0/24"
+    pe_subnet_cidr: "10.20.3.0/24"
+    agw_subnet_cidr: "10.20.4.0/24"
+    pod_cidr: "10.244.0.0/16"
+    service_cidr: "10.96.0.0/16"
+    dns_service_ip: "10.96.0.10"
+    nat_gateway: true
 
   aks:
-    name: "<INPUT>"
-    resource_group: "<INPUT>"
-    vnet_name: "<INPUT>"
-    vnet_resource_group: "<INPUT>"
-    # CIDR of the subnet used by the Kong internal load balancer (phase 12).
-    ingress_subnet: "<INPUT>"
+    name: "aks-pairs-monitor-dev"
+    resource_group: "rg-pairs-monitor-dev"
+    vnet_name: "vnet-pairs-monitor-dev"
+    vnet_resource_group: "rg-pairs-monitor-dev"
+    # Pinned to the Kubernetes version supported by KIC 3.5.14 (client-go 0.33).
+    kubernetes_version: "1.33"
+    node_vm_size: "Standard_B4ms"
+    node_min_count: 1
+    node_max_count: 2
+    # Empty list = public API without IP restriction. Add your public IP/32.
+    authorized_ip_ranges: []
+    private_cluster: false
+    # Static private IP for the Kong internal LoadBalancer (snet-aks).
+    internal_lb_ip: "10.20.1.250"
 
   private_dns:
-    subscription_id: "<INPUT>"
-    resource_group: "<INPUT>"
-    zone_name: "be.com"
+    subscription_id: "0a457f9a-0b37-4bc0-b7b3-2f712bdb361a"
+    resource_group: "rg-pairs-monitor-dev"
+    zone_name: "internal.example.com"
+    # Apex zone is internal.example.com; the backend record is
+    # be.internal.example.com -> VM1/VM2. The frontend fe.internal.example.com
+    # is resolved by the client hosts file to the AGW public IP.
+    record_name: "be"
     ttl: 300
 
   keyvault:
+    # <INPUT> = let Terraform generate a globally unique name; the sync script
+    # writes it back here.
     name: "<INPUT>"
-    resource_group: "<INPUT>"
-    # Workload identity used by the Key Vault CSI driver (phase 9).
+    resource_group: "rg-pairs-monitor-dev"
     workload_identity_client_id: "<INPUT>"
+    # Public access is enabled for this dev environment. Add your public IP/32
+    # to restrict the vault firewall, or leave empty for allow-all.
+    allowed_ip_ranges: []
+
+  vm:
+    admin_username: "azureuser"
+    size: "Standard_B2s"
+    image_publisher: "Canonical"
+    image_offer: "ubuntu-24_04-lts"
+    image_sku: "server-gen2"
+    image_version: "latest"
+    os_disk_type: "Standard_LRS"
+    os_disk_size_gb: 30
+
+  agw:
+    # Set true only after the AGW frontend certificate exists in Key Vault.
+    enabled: false
+    name: "agw-pairs-monitor-dev"
+    public_ip_name: "pip-agw-pairs-monitor-dev"
+    sku: "Standard_v2"
+    capacity: 1
+    # Versioned Key Vault certificate secret ID, written by the certificate
+    # workflow (certificates/issue-agw-cert.sh).
+    certificate_secret_id: "<INPUT>"
+    trusted_root_ca_path: "../pki/root-ca.crt"
 
 application:
-  public_hostname: "examplefe.com"
-  backend_hostname: "pairs-monitor.be.com"
+  public_hostname: "fe.internal.example.com"
+  backend_hostname: "be.internal.example.com"
   port: 8100
   health_endpoint: "/health"
 
@@ -77,6 +131,9 @@ kong:
 
   # Secret synced from Key Vault by the CSI driver and consumed by KIC.
   ca_secret_name: "pairs-monitor-ca"
+
+  # Static private IP assigned to the Kong internal LoadBalancer.
+  internal_lb_ip: "10.20.1.250"
 
 backends:
   - name: "vm1"

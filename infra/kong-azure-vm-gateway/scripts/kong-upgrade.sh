@@ -93,6 +93,7 @@ helm_args=(
   --set "gateway.image.repository=${KONG_GATEWAY_IMAGE}"
   --set "gateway.image.tag=${GATEWAY_TAG}"
   --set "controller.ingressController.image.tag=${KIC_TAG_ARG}"
+  --set-string "gateway.proxy.annotations.service\.beta\.kubernetes\.io/azure-load-balancer-ipv4=${INTERNAL_LB_IP}"
 )
 
 # .kong.replicas governs the production profile; dev stays at one replica.

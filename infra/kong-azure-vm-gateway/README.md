@@ -4,35 +4,35 @@ Automated Kong Gateway in AKS in front of two Linux VMs, with Azure Private DNS,
 a private root CA, Azure Key Vault / CSI trust distribution, HTTPS to the VMs
 with full certificate verification, and (later) Application Gateway + Entra ID.
 
-> **Status: phase 1 only.** This increment delivers the Kong Helm layer, the
-> Gateway API/Service/TLS manifests, the install/upgrade/apply scripts and the
-> configuration file. Terraform (Private DNS / Key Vault / identity),
-> certificate issuance and VM installation, renewal automation, Application
-> Gateway, Entra ID SSO, CI and the validation suites are **not implemented yet**.
-> `./scripts/deploy.sh --phase all` fails on purpose instead of pretending they ran.
+> **Status: infrastructure code + Kong layer + VM automation implemented; no live Azure apply yet.**
+> Terraform (8 modules) creates the resource group, network, private DNS, Key Vault,
+> AKS, identities, VMs and (gated) Application Gateway. The Kong Helm layer and the
+> VM certificate/systemd automation are implemented. Renewal automation, Entra ID SSO,
+> CI and the full validation suite are pending. `./scripts/deploy.sh --phase all` still
+> fails on purpose.
 
 ## Target architecture
 
 ```
-Browser ──HTTPS examplefe.com──► Application Gateway ──HTTPS──► Kong (AKS)
+Browser ──HTTPS fe.internal.example.com──► Application Gateway ──HTTPS──► Kong (AKS)
                                                                  │
                                                     Entra ID OIDC (later)
                                                                  │
                                                     Kong upstream (HTTPS)
-                                                     SNI pairs-monitor.be.com
+                                                     SNI be.internal.example.com
                                                      CA   pairs-monitor-root-ca
                                                                  │
                                         ┌────────────────────────┴───────────────┐
                                      VM1 10.20.2.51:8100                    VM2 10.20.2.52:8100
-                                     cert SAN pairs-monitor.be.com          cert SAN pairs-monitor.be.com
+                                     cert SAN be.internal.example.com          cert SAN be.internal.example.com
 ```
 
 Two distinct identities, deliberately:
 
 | Identity | Used for | Issued by |
 | --- | --- | --- |
-| `examplefe.com` | browser → Application Gateway → Kong listener | application certificate (phase 2/12) |
-| `pairs-monitor.be.com` | Kong → VM TLS (SNI + hostname + chain verification) | private root CA (phase 2) |
+| `fe.internal.example.com` | browser → Application Gateway → Kong listener | application certificate (phase 2/12) |
+| `be.internal.example.com` | Kong → VM TLS (SNI + hostname + chain verification) | private root CA (phase 2) |
 
 Placeholder backends are `10.20.2.51` / `10.20.2.52`. The spec's `100.64.2.51/52`
 cannot be used: Azure reserves `100.64.0.0/10` for CGNAT and rejects it in VNets.
@@ -42,9 +42,10 @@ cannot be used: Azure reserves `100.64.0.0/10` for CGNAT and rejects it in VNets
 ```
 kong-azure-vm-gateway/
 ├── config/config.yaml                  # single source of inputs + version pins
+├── terraform/                          # 8 modules: RG, network, DNS, VM, KV, identity, AKS, AGW
 ├── helm/
 │   ├── values.yaml                     # base chart values (3 replicas, DB-less, PDB, probes)
-│   ├── values-dev.yaml                 # 1 replica, ClusterIP (port-forward)
+│   ├── values-dev.yaml                 # 1 replica, internal Azure LB (static IP)
 │   ├── values-prod.yaml                # internal Azure LB, anti-affinity, PDB 2
 │   ├── values-csi.yaml                 # Key Vault CSI CA volume + health-check trust bundle
 │   ├── gateway.yaml                    # GatewayClass + Gateway (HTTPS/HTTP listeners)
@@ -62,7 +63,8 @@ kong-azure-vm-gateway/
 │   ├── sign-vm-csr.sh                  # controlled signing host
 │   ├── issue-vm-certificates.sh        # signs all backend CSRs from config
 │   ├── validate-certificate.sh         # SAN/EKU/chain/key-match checks
-│   └── install-vm-certificate.sh       # keystore + env + restart (runs on the VM)
+│   ├── install-vm-certificate.sh       # keystore + env + restart (runs on the VM)
+│   └── upload-ca-to-keyvault.sh        # public CA PEM + stable UUID for CSI
 ├── vm/
 │   ├── install-hello-service.sh        # hello user, dirs, systemd unit
 │   └── reload-application.sh           # restart + local HTTPS health check
@@ -77,9 +79,9 @@ kong-azure-vm-gateway/
 └── README.md                           # this file
 ```
 
-Not present yet: `terraform/`, `automation/`, `monitoring/`,
-`.github/workflows/`, `config/schema.json` and the remaining validation
-scripts listed in the specification.
+Not present yet: `automation/`, `monitoring/`, `.github/workflows/`,
+`config/schema.json` and the remaining validation scripts listed in the
+specification.
 
 ## Pinned versions
 
@@ -90,6 +92,7 @@ scripts listed in the specification.
 | Kong Ingress Controller | `kong/kubernetes-ingress-controller:3.5.14` |
 | Gateway API CRDs | `v1.3.0` **experimental** |
 | Key Vault CSI provider | `1.8.2` (AKS managed add-on) |
+| Terraform / azurerm | Terraform `>= 1.9`, `hashicorp/azurerm ~> 4.0` |
 
 `3.5.14` is the latest KIC 3.5 patch and its `go.mod` pins
 `sigs.k8s.io/gateway-api v1.3.0`, which is why the CRD channel is 1.3.0
@@ -98,6 +101,7 @@ experimental. Bump `config/config.yaml` only after re-checking that matrix.
 ## Prerequisites
 
 - `kubectl` 1.29+ pointed at the target cluster, `helm` 3.14+
+- `terraform` 1.9+, Azure CLI (`az login`)
 - `yq` v4 (mikefarah), `envsubst` (gettext), `python3` (runtime validation), `bash` 4+
 - `openssl` 1.1.1+ for the certificate scripts; `az` only for Key Vault upload/download
 - On the VMs: Java 21, `systemd`, `openssl`, `curl`
@@ -110,6 +114,15 @@ On another machine install yq v4 (`winget install --id MikeFarah.yq` or
 ## Quick start
 
 ```bash
+# 0. Infrastructure (T1): generate tfvars, validate, plan, apply
+./scripts/terraform-config.sh
+terraform -chdir=terraform init
+terraform -chdir=terraform fmt -check
+terraform -chdir=terraform validate
+terraform -chdir=terraform plan
+terraform -chdir=terraform apply
+./scripts/sync-terraform-outputs.sh
+
 # 1. Fill in config/config.yaml (every <INPUT> and both VM IPs)
 #    Replace the placeholder Key Vault / tenant / identity values too.
 
@@ -128,8 +141,9 @@ helm template kong kong/ingress --version 0.24.0 -n kong \
 ./scripts/deploy.sh --config config/config.yaml --env dev
 ```
 
-Production uses `--env prod` (internal Azure LoadBalancer) and `kong-upgrade.sh`
-requires `--yes` before applying anything.
+The dev profile uses one Kong replica and the internal Azure LoadBalancer with the
+static IP from `config.kong.internal_lb_ip`; production uses three replicas and PDB
+`minAvailable: 2`. `kong-upgrade.sh` requires `--yes` before applying anything.
 
 ## VM certificate and application deployment
 
@@ -145,9 +159,12 @@ verified the chain and SAN.
 # 1. Signing host only: create the Root CA once. The CA key never leaves this host.
 ./certificates/create-root-ca.sh --out-dir ./pki
 
+# 1b. Upload the public CA PEM + stable UUID to Key Vault for the CSI driver.
+./certificates/upload-ca-to-keyvault.sh --vault-name <key-vault-name>
+
 # 2. On each VM: generate the private key + CSR. The key never leaves the VM.
 ./certificates/generate-vm-csr.sh --out-dir /etc/hello/csr --name vm1 \
-  --cn pairs-monitor.be.com --san pairs-monitor.be.com
+  --cn be.internal.example.com --san be.internal.example.com
 # Copy only /etc/hello/csr/vm1.csr to the signing host (never vm1.key), e.g.:
 #   scp vm1:/etc/hello/csr/vm1.csr ./csr/vm1.csr
 # Repeat with --name vm2.
@@ -200,7 +217,7 @@ host needs `Key Vault Secrets Officer` to upload the public chain.
 New-VM order: install Java 21 -> `install-hello-service.sh` -> generate key/CSR ->
 sign -> `install-vm-certificate.sh` (or `--skip-restart` + `reload-application.sh`).
 `reload-application.sh` restarts the unit and verifies
-`https://pairs-monitor.be.com:8100/health` locally with the private CA.
+`https://be.internal.example.com:8100/health` locally with the private CA.
 
 ### Phase-1 prerequisites you must supply
 
@@ -211,7 +228,7 @@ issues real certificates, create a throwaway listener cert for lab testing:
 
 ```bash
 openssl req -x509 -newkey rsa:3072 -nodes -days 7 \
-  -subj "/CN=examplefe.com" -addext "subjectAltName=DNS:examplefe.com" \
+  -subj "/CN=fe.internal.example.com" -addext "subjectAltName=DNS:fe.internal.example.com" \
   -keyout kong-proxy.key -out kong-proxy.crt
 kubectl create secret tls kong-proxy-tls -n kong \
   --cert=kong-proxy.crt --key=kong-proxy.key
@@ -232,6 +249,61 @@ continue if one is missing.
 
 Details and the no-Key-Vault CA stand-in are in `helm/README.md`.
 
+## Terraform infrastructure (8 modules)
+
+| # | Module | Creates |
+|---|---|---|
+| 01 | `resource-group` | resource group (create or reuse) |
+| 02 | `network` | VNet, `snet-aks`, `snet-vm`, `snet-pe`, `snet-agw`, NSGs/rules, NAT gateway |
+| 03 | `private-dns` | private zone `internal.example.com`, A record `be`, VNet link |
+| 04 | `vm` | 2 NICs, 2 Ubuntu 24.04 VMs, static private IPs, no public IPs, Java 21 cloud-init, password auth, patch mode |
+| 05 | `key-vault` | Key Vault with RBAC authorization, public access, purge protection; secret contents are script-managed |
+| 06 | `identity` | AKS workload UAMI + federated credential and AGW UAMI |
+| 07 | `aks` | AKS Free tier, CNI Overlay, OIDC + workload identity, Key Vault CSI provider, single `Standard_B4ms` node with autoscale |
+| 08 | `application-gateway` | Standard_v2, static public IP, HTTPS listener, Kong backend pool, private-root trust, `/health` probe |
+
+No observability, backup, WAF or private endpoints by request.
+
+### DNS and local trust
+
+- Backend: private zone `internal.example.com`, A record `be` → `10.20.2.51`, `10.20.2.52`.
+- Frontend: `fe.internal.example.com` resolves through the Windows hosts file to the
+  AGW public IP. There is no public DNS zone.
+- The browser must trust the private root CA:
+
+```powershell
+# Run as Administrator
+Add-Content C:\Windows\System32\drivers\etc\hosts "<AGW_PUBLIC_IP> fe.internal.example.com"
+Import-Certificate -FilePath .\pki\root-ca.crt -CertStoreLocation Cert:\LocalMachine\Root
+```
+
+### Commands and state
+
+```bash
+# Generate terraform/terraform.tfvars.json from config/config.yaml
+./scripts/terraform-config.sh
+
+terraform -chdir=terraform init
+terraform -chdir=terraform fmt -check
+terraform -chdir=terraform validate
+terraform -chdir=terraform plan
+terraform -chdir=terraform apply
+
+# Write tenant / Key Vault / UAMI / IPs back into config/config.yaml
+./scripts/sync-terraform-outputs.sh
+```
+
+- State is **local** by request. Do not commit `terraform.tfstate`,
+  `terraform/terraform.tfvars.json` or `terraform/vm-admin-password.txt`.
+- The VM admin password is generated by Terraform and stored in
+  `terraform/vm-admin-password.txt` (0600); it is also in local state.
+- `enable_application_gateway = false` until the AGW frontend certificate exists in
+  Key Vault; set it to `true` in a later apply (T3).
+- A single B4ms node is low cost but not HA: use the `values-dev.yaml` Kong profile
+  (1 replica). The prod 3-replica/PDB/anti-affinity profile needs more nodes.
+- `aks_authorized_ip_ranges = []` leaves the public AKS API unrestricted; add your
+  public IP/32 to restrict it.
+
 ## Security properties enforced by this layer
 
 - Backend TLS verification cannot be disabled: `BackendTLSPolicy` sets
@@ -251,8 +323,10 @@ Details and the no-Key-Vault CA stand-in are in `helm/README.md`.
 - Active HTTPS health checks verify the same private CA: `values-csi.yaml` adds
   `/etc/kong/trust/ca.crt` to `lua_ssl_trusted_certificate` (Kong Service
   `ca_certificates` do not apply to health checks).
-- Admin API (8444) is headless/ClusterIP and restricted to KIC pods by
-  NetworkPolicy.
+- Admin API (8444) is headless/ClusterIP and not exposed outside the cluster. The
+  `network-policy.yaml` manifest is applied, but AKS is configured with
+  `network_policy = "none"` by request, so the policy is **not enforced**. Do not
+  create a public Service for the admin listener.
 - Version pins are explicit; no `latest` tags and no unpinned CRDs.
 - Scripts are idempotent (`helm upgrade --install`, server-side apply, checksum-gated
   rollout).
@@ -261,9 +335,10 @@ Details and the no-Key-Vault CA stand-in are in `helm/README.md`.
 
 - Kong OSS has **no official OIDC plugin**; Entra ID SSO is deferred by decision.
 - KIC still skips verification of Kong's self-signed **Admin API** certificate
-  (`kong_admin_tls_skip_verify: true`). That hop is headless and
-  NetworkPolicy-restricted; phase 9 replaces it with a private-CA admin
-  certificate. Backend TLS verification is never disabled.
+  (`kong_admin_tls_skip_verify: true`). That hop is headless/ClusterIP and not
+  publicly exposed; AKS network policy enforcement is disabled by request. Phase 9
+  replaces the admin certificate with a private-CA one. Backend TLS verification is
+  never disabled.
 - Key Vault CSI rotation does not reload Kong's upstream trust; use
   `reload-kong-trust.sh` after any CA rotation (checksum → rollout).
 - `GatewayAlpha=true` is required in KIC for `BackendTLSPolicy`; it is set in
@@ -272,6 +347,9 @@ Details and the no-Key-Vault CA stand-in are in `helm/README.md`.
   the Java tests were validated locally, but `wait_for_csi_secret`, the fail-closed
   policy checks and `validate-kong.sh` have not been executed against a live AKS
   cluster in this increment.
+- The Terraform configuration passes `terraform fmt -check` and `terraform validate`;
+  no `plan`/`apply` was run because no Azure credentials/cluster are available here.
+  AKS version availability in the target region must still be confirmed on the first plan.
 - The `certificates/` and `vm/` scripts were exercised end to end against a temporary
   prefix (Root CA, CSRs, signed certificates, PKCS#12 keystore, systemd unit) and the
   keystore was used to start the Java app. `systemctl`, real VM users/ownership and
@@ -279,11 +357,10 @@ Details and the no-Key-Vault CA stand-in are in `helm/README.md`.
 
 ## Next phases
 
-1. Terraform: Private DNS zone/records/VNet links, Key Vault, workload identity.
-2. Private CA + VM certificate issuance/installation, Key Vault storage.
-3. Renewal automation, monitoring, full validation suite, CI.
-4. Application Gateway integration and Entra ID SSO (needs an enterprise-grade
-   OIDC path; Kong OSS alone cannot do it).
+1. First live `terraform plan/apply`; confirm the AKS 1.33 version in `eastus`.
+2. Upload CA/VM/AGW/Kong certificates to Key Vault and install Kong (`T2`).
+3. Enable Application Gateway (`T3`) and install the hosts entry + private root.
+4. Renewal automation, Entra ID SSO, CI and the full validation suite.
 
 See `helm/README.md` for the rendered topology, TLS verification details and
 troubleshooting table.

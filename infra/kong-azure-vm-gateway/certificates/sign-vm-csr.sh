@@ -4,7 +4,7 @@
 # Usage:
 #   ./certificates/sign-vm-csr.sh --csr FILE --name vm1 \
 #       [--ca-cert pki/root-ca.crt] [--ca-key pki/root-ca.key] \
-#       [--out-dir pki/issued] [--hostname pairs-monitor.be.com] [--days 365] \
+#       [--out-dir pki/issued] [--hostname be.internal.example.com] [--days 365] \
 #       [--upload-keyvault --vault-name NAME --secret-name NAME]
 #
 # Only the public certificate/chain is uploaded to Key Vault. The VM private key
@@ -18,7 +18,7 @@ NAME=""
 CA_CERT="${SCRIPT_DIR}/../pki/root-ca.crt"
 CA_KEY="${SCRIPT_DIR}/../pki/root-ca.key"
 OUT_DIR="${SCRIPT_DIR}/../pki/issued"
-HOSTNAME="pairs-monitor.be.com"
+HOSTNAME="be.internal.example.com"
 DAYS="365"
 UPLOAD_KEYVAULT="false"
 VAULT_NAME=""

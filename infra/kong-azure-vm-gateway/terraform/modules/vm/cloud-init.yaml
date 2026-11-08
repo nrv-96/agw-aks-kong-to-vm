@@ -1,0 +1,7 @@
+#cloud-config
+package_update: true
+packages:
+  - openjdk-21-jre-headless
+  - openssl
+  - curl
+  - ca-certificates
