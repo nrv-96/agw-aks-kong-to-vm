@@ -144,7 +144,7 @@ Repeat for `vm2`.
 
 | File | Contents |
 |---|---|
-| `KONG.md` | Kong components, install, object map, request flow, ports, troubleshooting |
+| `KONG.md` | Kong components, install, object map, **HTTPRoute + KIC-generated Kong route**, request flow, ports, troubleshooting |
 | `CERTIFICATES.md` | Trust chain, every cert/key, creation, storage, rotation, security |
 | `RUNBOOK.md` | Full repeatable deployment order and the errors hit |
 | `cost.md` | East US inventory, hourly/monthly costs |
@@ -344,7 +344,7 @@ Do not commit `pki/`, `csr/`, `.cache/`, `terraform.tfstate*`,
 | Path | Purpose |
 |---|---|
 | `AGENT_HANDOFF.md` | this file — start here |
-| `KONG.md` | Kong architecture, objects, request flow |
+| `KONG.md` | Kong architecture, HTTPRoute/Kong route, objects, request flow |
 | `CERTIFICATES.md` | trust chain, every certificate/key, rotation |
 | `RUNBOOK.md` | full repeatable deployment order |
 | `cost.md` | East US cost inventory |

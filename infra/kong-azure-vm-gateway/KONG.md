@@ -241,6 +241,106 @@ Targets:
 
 ---
 
+## 5.1 The Kong route (HTTPRoute → Kong route)
+
+### Source manifest
+
+`helm/httproute.yaml` (rendered by `apply-kong-resources.sh`):
+
+```yaml
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: pairs-monitor
+  namespace: kong
+  annotations:
+    konghq.com/preserve-host: "false"
+spec:
+  parentRefs:
+    - name: pairs-monitor-gateway
+      sectionName: https
+  hostnames:
+    - fe.internal.example.com
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - group: ""
+          kind: Service
+          name: pairs-monitor-backend
+          port: 8100
+```
+
+### KIC-generated Kong route
+
+KIC creates one Kong Service and one Kong Route per HTTPRoute rule:
+
+| Kubernetes | Kong |
+|---|---|
+| `HTTPRoute/kong/pairs-monitor` rule 0 | Kong Service `httproute.kong.pairs-monitor.0` |
+| the same rule's match | Kong Route `httproute.kong.pairs-monitor.0.0` |
+
+Route object:
+
+```json
+{
+  "name": "httproute.kong.pairs-monitor.0.0",
+  "protocols": ["https"],
+  "hosts": ["fe.internal.example.com"],
+  "paths": ["~/$", "/"],
+  "strip_path": false,
+  "preserve_host": false,
+  "https_redirect_status_code": 426,
+  "service": { "id": "<kong service id>" }
+}
+```
+
+Why each field:
+
+| Field | Value | Source / reason |
+|---|---|---|
+| `protocols` | `["https"]` | Route is attached to the HTTPS listener only |
+| `hosts` | `["fe.internal.example.com"]` | `spec.hostnames` |
+| `paths` | `["~/$", "/"]` | `PathPrefix /` (KIC adds the regex root) |
+| `strip_path` | `false` | `/health` is forwarded unchanged |
+| `preserve_host` | `false` | Use the Service `konghq.com/host-header` (`be...`) for the upstream Host/SNI |
+| `https_redirect_status_code` | `426` | Kong default for protocol mismatch |
+
+### Matching order
+
+1. Request arrives on Kong `8443` over TLS.
+2. SNI / `Host` is `fe.internal.example.com`.
+3. Path `/health` matches the `/` prefix.
+4. Protocol must be `https`; the route is not installed in the HTTP router.
+5. The route forwards to Kong Service `httproute.kong.pairs-monitor.0`.
+6. That service's upstream targets are `10.20.2.51:8100` and `10.20.2.52:8100`.
+
+### Inspect the route
+
+```bash
+kubectl get httproute pairs-monitor -n kong -o yaml
+kubectl describe httproute pairs-monitor -n kong
+kubectl get httproute pairs-monitor -n kong -o jsonpath='{range .status.parents[*]}{.parentRef.name}{" "}{range .conditions[*]}{.type}={.status}{" "}{end}{"\n"}{end}'
+```
+
+Admin API (port-forward in another terminal):
+
+```bash
+kubectl -n kong port-forward deploy/kong-gateway 18444:8444
+curl -sk https://127.0.0.1:18444/routes | python3 -m json.tool
+curl -sk https://127.0.0.1:18444/routes/httproute.kong.pairs-monitor.0.0 | python3 -m json.tool
+```
+
+### Why there is no HTTP redirect route
+
+KIC 3.5.14 / Kong 3.9.4 matched the HTTP-only redirect route on the HTTPS
+listener as well, producing a `301` loop. The redirect route was removed.
+Application Gateway owns the public HTTP→HTTPS redirect. Do not re-add it.
+
+---
+
 ## 6. Request flow
 
 ### Client → AGW

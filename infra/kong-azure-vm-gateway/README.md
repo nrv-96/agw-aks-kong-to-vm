@@ -18,7 +18,7 @@ Entra ID SSO (pending).
 | File | Purpose |
 |---|---|
 | `AGENT_HANDOFF.md` | **Start here** — live state, start-here checklist, commands, do-not-touch rules |
-| `KONG.md` | Kong architecture, Kubernetes objects, KIC translation, request flow, troubleshooting |
+| `KONG.md` | Kong architecture, **HTTPRoute + KIC-generated Kong route**, objects, request flow |
 | `CERTIFICATES.md` | Trust chain, every certificate/key, creation, storage, rotation, security |
 | `RUNBOOK.md` | Full repeatable deployment order and the errors hit |
 | `cost.md` | East US SKU inventory and hourly/monthly cost |
