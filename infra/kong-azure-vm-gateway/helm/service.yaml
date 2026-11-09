@@ -17,6 +17,7 @@ metadata:
     app.kubernetes.io/name: pairs-monitor-backend
     app.kubernetes.io/part-of: pairs-monitor
   annotations:
+    konghq.com/host-header: ${BACKEND_HOSTNAME}
     konghq.com/upstream-policy: "pairs-monitor-backend-policy"
     konghq.com/connect-timeout: "5000"
     konghq.com/read-timeout: "60000"

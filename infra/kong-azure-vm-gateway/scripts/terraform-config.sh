@@ -61,6 +61,7 @@ data = {
     "aks_subnet_cidr": clean(network.get("aks_subnet_cidr"), "10.20.1.0/24"),
     "vm_subnet_cidr": clean(network.get("vm_subnet_cidr"), "10.20.2.0/24"),
     "agw_subnet_cidr": clean(network.get("agw_subnet_cidr"), "10.20.4.0/24"),
+    "bastion_subnet_cidr": clean(section(azure, "bastion").get("subnet_cidr"), "10.20.3.0/24"),
     "pod_cidr": clean(network.get("pod_cidr"), "10.244.0.0/16"),
     "service_cidr": clean(network.get("service_cidr"), "10.96.0.0/16"),
     "dns_service_ip": clean(network.get("dns_service_ip"), "10.96.0.10"),
@@ -79,13 +80,13 @@ data = {
     "vm_size": clean(vm.get("size"), "Standard_B2s"),
     "vm_image_publisher": clean(vm.get("image_publisher"), "Canonical"),
     "vm_image_offer": clean(vm.get("image_offer"), "ubuntu-24_04-lts"),
-    "vm_image_sku": clean(vm.get("image_sku"), "server-gen2"),
+    "vm_image_sku": clean(vm.get("image_sku"), "server"),
     "vm_image_version": clean(vm.get("image_version"), "latest"),
     "os_disk_type": clean(vm.get("os_disk_type"), "Standard_LRS"),
     "os_disk_size_gb": int(vm.get("os_disk_size_gb", 30)),
 
     "aks_name": clean(aks.get("name"), "aks-pairs-monitor-dev"),
-    "kubernetes_version": clean(aks.get("kubernetes_version"), "1.33"),
+    "kubernetes_version": clean(aks.get("kubernetes_version"), "1.34"),
     "node_vm_size": clean(aks.get("node_vm_size"), "Standard_B4ms"),
     "node_min_count": int(aks.get("node_min_count", 1)),
     "node_max_count": int(aks.get("node_max_count", 2)),
@@ -102,6 +103,10 @@ data = {
     "agw_capacity": int(agw.get("capacity", 1)),
     "agw_certificate_secret_id": clean(agw.get("certificate_secret_id"), ""),
     "root_ca_cert_path": clean(agw.get("trusted_root_ca_path"), "../pki/root-ca.crt"),
+
+    "enable_bastion": bool(section(azure, "bastion").get("enabled", True)),
+    "bastion_name": clean(section(azure, "bastion").get("name"), "bas-pairs-monitor-dev"),
+    "bastion_public_ip_name": clean(section(azure, "bastion").get("public_ip_name"), "pip-bas-pairs-monitor-dev"),
 }
 
 if not data["subscription_id"]:

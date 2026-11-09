@@ -2,11 +2,14 @@
 
 Automated Kong Gateway in AKS in front of two Linux VMs, with Azure Private DNS,
 a private root CA, Azure Key Vault / CSI trust distribution, HTTPS to the VMs
-with full certificate verification, and (later) Application Gateway + Entra ID.
+with full certificate verification, Application Gateway fronting Kong, and
+Entra ID SSO (pending).
 
-> **Status: infrastructure code + Kong layer + VM automation implemented; no live Azure apply yet.**
-> Terraform (8 modules) creates the resource group, network, private DNS, Key Vault,
-> AKS, identities, VMs and (gated) Application Gateway. The Kong Helm layer and the
+> **Status: live. Terraform foundation, Bastion, VM TLS/hello-app, Kong/CSI and
+> Application Gateway are deployed and validated. Entra ID SSO and CA renewal
+> automation are pending.**
+> Terraform (9 modules) creates the resource group, network, private DNS, Key Vault,
+> AKS, identities, VMs, a Bastion host and (gated) Application Gateway. The Kong Helm layer and the
 > VM certificate/systemd automation are implemented. Renewal automation, Entra ID SSO,
 > CI and the full validation suite are pending. `./scripts/deploy.sh --phase all` still
 > fails on purpose.
@@ -42,14 +45,15 @@ cannot be used: Azure reserves `100.64.0.0/10` for CGNAT and rejects it in VNets
 ```
 kong-azure-vm-gateway/
 ├── config/config.yaml                  # single source of inputs + version pins
-├── terraform/                          # 8 modules: RG, network, DNS, VM, KV, identity, AKS, AGW
+├── cost.md                             # East US SKU/price inventory + monthly estimate
+├── terraform/                          # 9 modules: RG, network, DNS, VM, KV, identity, AKS, AGW, Bastion
 ├── helm/
 │   ├── values.yaml                     # base chart values (3 replicas, DB-less, PDB, probes)
 │   ├── values-dev.yaml                 # 1 replica, internal Azure LB (static IP)
 │   ├── values-prod.yaml                # internal Azure LB, anti-affinity, PDB 2
 │   ├── values-csi.yaml                 # Key Vault CSI CA volume + health-check trust bundle
 │   ├── gateway.yaml                    # GatewayClass + Gateway (HTTPS/HTTP listeners)
-│   ├── httproute.yaml                  # HTTPS route + HTTP→HTTPS 301
+│   ├── httproute.yaml                  # HTTPS route (public HTTP→HTTPS is at AGW)
 │   ├── service.yaml                    # pairs-monitor-backend (selector-less, https)
 │   ├── endpointslice.yaml              # the two VM IPs (single target source)
 │   ├── backend-tls-policy.yaml         # SNI + hostname + CA verification
@@ -145,6 +149,58 @@ helm template kong kong/ingress --version 0.24.0 -n kong \
 The dev profile uses one Kong replica and the internal Azure LoadBalancer with the
 static IP from `config.kong.internal_lb_ip`; production uses three replicas and PDB
 `minAvailable: 2`. `kong-upgrade.sh` requires `--yes` before applying anything.
+
+### Bastion access
+
+The VMs have no public IPs. Connect through the Basic Bastion host.
+
+| VM | Resource ID |
+|---|---|
+| `vm1` | `/subscriptions/6d064e64-7038-4a50-aa19-899b347bed41/resourceGroups/rg-pairs-monitor-dev/providers/Microsoft.Compute/virtualMachines/vm1` |
+| `vm2` | `/subscriptions/6d064e64-7038-4a50-aa19-899b347bed41/resourceGroups/rg-pairs-monitor-dev/providers/Microsoft.Compute/virtualMachines/vm2` |
+
+```powershell
+# Load the generated password (or use the value you supplied via vm_admin_password)
+$VM_PASSWORD = (Get-Content .\terraform\vm-admin-password.txt -Raw).Trim()
+
+az network bastion ssh `
+  --resource-group rg-pairs-monitor-dev `
+  --name bas-pairs-monitor-dev `
+  --target-resource-id "/subscriptions/6d064e64-7038-4a50-aa19-899b347bed41/resourceGroups/rg-pairs-monitor-dev/providers/Microsoft.Compute/virtualMachines/vm1" `
+  --auth-type password `
+  --username azureuser
+```
+
+Repeat with the `vm2` resource ID. The CLI prompts for the password; paste
+`$VM_PASSWORD`. Bastion copy/paste is enabled. In the portal: VM → **Connect** →
+**Bastion**.
+
+The optional Terraform variable `vm_admin_password` (sensitive, default empty)
+lets you supply your own password. When set, Terraform updates both VMs in place
+and rewrites `terraform/vm-admin-password.txt`.
+
+### Generate VM certificate requests
+
+```bash
+./scripts/generate-vm-csrs.sh
+```
+
+This runs `certificates/generate-vm-csr.sh` on vm1 and vm2 through Azure VM Run
+Command, so nothing needs to be copied to the VMs. Only the CSRs come back, into
+`csr/vm1.csr` and `csr/vm2.csr`; the private keys stay at
+`/etc/hello/csr/<vm>.key` on each VM. The script is idempotent: an existing key
+is never overwritten, and the CSR is regenerated from it.
+
+### Install the app and certificate on the VMs
+
+```bash
+./scripts/install-vm-app.sh
+```
+
+This pushes the signed certificate, chain, root CA and `target/hello-app.jar` to
+both VMs through VM Run Command, installs the `hello-app` systemd service,
+builds the PKCS#12 keystore, restarts the service, and validates
+`https://be.internal.example.com:8100/health` locally on each VM.
 
 ## VM certificate and application deployment
 
@@ -250,18 +306,19 @@ continue if one is missing.
 
 Details and the no-Key-Vault CA stand-in are in `helm/README.md`.
 
-## Terraform infrastructure (8 modules)
+## Terraform infrastructure (9 modules)
 
 | # | Module | Creates |
 |---|---|---|
 | 01 | `resource-group` | resource group (create or reuse) |
-| 02 | `network` | VNet, `snet-aks`, `snet-vm`, `snet-agw`, NSGs/rules, NAT gateway |
+| 02 | `network` | VNet, `snet-aks`, `snet-vm`, `snet-agw`, `AzureBastionSubnet`, NSGs/rules, NAT gateway |
 | 03 | `private-dns` | private zone `internal.example.com`, A record `be`, VNet link |
 | 04 | `vm` | 2 NICs, 2 Ubuntu 24.04 VMs, static private IPs, no public IPs, Java 21 cloud-init, password auth, patch mode |
 | 05 | `key-vault` | Key Vault with RBAC authorization, public access, purge protection; secret contents are script-managed |
 | 06 | `identity` | AKS control-plane, kubelet, Kong CSI and AGW UAMIs; federated credential created after AKS |
 | 07 | `aks` | AKS Free tier, CNI Overlay, OIDC + workload identity, user-assigned control-plane + kubelet identities, CSI provider, single `Standard_B4ms` node with autoscale |
-| 08 | `application-gateway` | Standard_v2, static public IP, HTTPS listener, Kong backend pool, private-root trust, `/health` probe |
+| 08 | `application-gateway` | Standard_v2, static public IP, HTTPS listener, Kong backend pool, private-root trust, `/health` probe (enabled in the live config) |
+| 09 | `bastion` | Basic Azure Bastion, Standard static public IP, copy/paste enabled, dedicated `AzureBastionSubnet` |
 
 No observability, backup, WAF or private endpoints by request. The Private
 Endpoint subnet/NSG are deferred until Key Vault private connectivity is
@@ -324,6 +381,10 @@ terraform -chdir=terraform apply
   fails on mismatch; Kubernetes object creation alone is not treated as success.
 - Kong never sees VM private keys: only the public CA certificate is mounted from
   Key Vault.
+- Key Vault RBAC is least-privilege: only the Kong CSI workload identity and the
+  optional AGW identity receive `Key Vault Secrets User`. The AKS Key Vault
+  provider add-on identity is intentionally not granted any Key Vault role because
+  the `SecretProviderClass` uses workload identity.
 - VM private keys are generated on each VM and never leave it; only the public
   leaf+chain certificate is stored in Key Vault. The systemd service runs as a
   dedicated `hello` user with a 0600 keystore/env file.
@@ -334,8 +395,8 @@ terraform -chdir=terraform apply
   `/etc/kong/trust/ca.crt` to `lua_ssl_trusted_certificate` (Kong Service
   `ca_certificates` do not apply to health checks).
 - Admin API (8444) is headless/ClusterIP and not exposed outside the cluster. The
-  `network-policy.yaml` manifest is applied, but AKS is configured with
-  `network_policy = "none"` by request, so the policy is **not enforced**. Do not
+  `network-policy.yaml` manifest is applied and AKS is configured with
+  `network_policy = "azure"`, so the policy is enforced. Do not
   create a public Service for the admin listener.
 - Version pins are explicit; no `latest` tags and no unpinned CRDs.
 - Scripts are idempotent (`helm upgrade --install`, server-side apply, checksum-gated
@@ -367,10 +428,10 @@ terraform -chdir=terraform apply
 
 ## Next phases
 
-1. First live `terraform plan/apply`; confirm the AKS 1.33 version in `eastus`.
-2. Upload CA/VM/AGW/Kong certificates to Key Vault and install Kong (`T2`).
-3. Enable Application Gateway (`T3`) and install the hosts entry + private root.
-4. Renewal automation, Entra ID SSO, CI and the full validation suite.
+- First live `terraform plan/apply` — done.
+- CA/VM/AGW/Kong certificates and Kong installation — done.
+- Application Gateway and HTTP→HTTPS redirect — done.
+- Remaining: CA renewal automation, Entra ID SSO, CI and the full validation suite.
 
 See `helm/README.md` for the rendered topology, TLS verification details and
 troubleshooting table.

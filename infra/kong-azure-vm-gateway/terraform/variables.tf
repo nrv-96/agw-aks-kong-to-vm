@@ -129,6 +129,13 @@ variable "admin_username" {
   default = "azureuser"
 }
 
+variable "vm_admin_password" {
+  description = "Admin password for vm1/vm2. Leave empty to use the generated random password."
+  type        = string
+  sensitive   = true
+  default     = ""
+}
+
 variable "vm_size" {
   type    = string
   default = "Standard_B2s"
@@ -146,7 +153,7 @@ variable "vm_image_offer" {
 
 variable "vm_image_sku" {
   type    = string
-  default = "server-gen2"
+  default = "server"
 }
 
 variable "vm_image_version" {
@@ -173,7 +180,7 @@ variable "aks_name" {
 variable "kubernetes_version" {
   description = "Must be supported by KIC 3.5.14."
   type        = string
-  default     = "1.33"
+  default     = "1.34"
 }
 
 variable "node_vm_size" {
@@ -252,4 +259,27 @@ variable "root_ca_cert_path" {
   description = "Path to the public root CA PEM used as AGW trusted root."
   type        = string
   default     = "../pki/root-ca.crt"
+}
+
+# --- Azure Bastion -----------------------------------------------------------
+variable "enable_bastion" {
+  description = "Create an Azure Bastion Basic host for SSH/RDP access to the VMs."
+  type        = bool
+  default     = true
+}
+
+variable "bastion_name" {
+  type    = string
+  default = "bas-pairs-monitor-dev"
+}
+
+variable "bastion_public_ip_name" {
+  type    = string
+  default = "pip-bas-pairs-monitor-dev"
+}
+
+variable "bastion_subnet_cidr" {
+  description = "Dedicated AzureBastionSubnet; must be /26 or larger."
+  type        = string
+  default     = "10.20.3.0/24"
 }

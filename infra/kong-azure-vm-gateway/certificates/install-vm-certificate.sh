@@ -230,11 +230,19 @@ fi
 
 if command -v curl >/dev/null 2>&1; then
   log "validating https://${HOSTNAME}:${PORT}/health"
-  if ! curl -fsS --max-time 10 \
-      --cacert "${TLS_DIR}/ca.crt" \
-      --resolve "${HOSTNAME}:${PORT}:127.0.0.1" \
-      "https://${HOSTNAME}:${PORT}/health" | grep -q '"status":"UP"'; then
-    log "health validation failed; rolling back the previous keystore"
+  HEALTH_OK="false"
+  for attempt in 1 2 3 4 5 6 7 8 9 10; do
+    if curl -fsS --max-time 5 \
+        --cacert "${TLS_DIR}/ca.crt" \
+        --resolve "${HOSTNAME}:${PORT}:127.0.0.1" \
+        "https://${HOSTNAME}:${PORT}/health" | grep -q '"status":"UP"'; then
+      HEALTH_OK="true"
+      break
+    fi
+    sleep 2
+  done
+  if [[ "${HEALTH_OK}" != "true" ]]; then
+    log "health validation failed after 10 attempts; rolling back the previous keystore"
     if [[ -f "${KEYSTORE}.previous" ]]; then
       install -m 0600 "${KEYSTORE}.previous" "${KEYSTORE}"
       systemctl restart "${SERVICE}" || true

@@ -61,3 +61,11 @@ output "agw_public_ip" {
 output "admin_password_file" {
   value = local_sensitive_file.admin_password.filename
 }
+
+output "bastion_name" {
+  value = try(module.bastion[0].name, "")
+}
+
+output "bastion_public_ip" {
+  value = try(module.bastion[0].public_ip, "")
+}

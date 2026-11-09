@@ -22,6 +22,16 @@ CA_ID=""
 log() { printf '%s %s\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$*" >&2; }
 die() { log "ERROR: $*"; exit 1; }
 
+# The az CLI can be a Windows binary when this runs under WSL; it cannot read
+# /mnt/... paths. Convert file arguments with wslpath when available.
+az_path() {
+  if command -v wslpath >/dev/null 2>&1; then
+    wslpath -w "$1"
+  else
+    printf '%s' "$1"
+  fi
+}
+
 usage() {
   sed -n '2,10p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
   exit "${1:-0}"
@@ -68,7 +78,7 @@ log "uploading public CA to ${VAULT_NAME}/${CA_SECRET}"
 az keyvault secret set \
   --vault-name "${VAULT_NAME}" \
   --name "${CA_SECRET}" \
-  --file "${CA_CERT}" \
+  --file "$(az_path "${CA_CERT}")" \
   --encoding utf-8 \
   --only-show-errors >/dev/null
 

@@ -5,6 +5,7 @@ variable "vnet_cidr" { type = string }
 variable "aks_subnet_cidr" { type = string }
 variable "vm_subnet_cidr" { type = string }
 variable "agw_subnet_cidr" { type = string }
+variable "bastion_subnet_cidr" { type = string }
 variable "enable_nat_gateway" { type = bool }
 variable "tags" {
   type    = map(string)
@@ -38,6 +39,14 @@ resource "azurerm_subnet" "agw" {
   resource_group_name  = var.resource_group_name
   virtual_network_name = azurerm_virtual_network.this.name
   address_prefixes     = [var.agw_subnet_cidr]
+}
+
+# Azure Bastion requires this exact subnet name and a prefix of /26 or larger.
+resource "azurerm_subnet" "bastion" {
+  name                 = "AzureBastionSubnet"
+  resource_group_name  = var.resource_group_name
+  virtual_network_name = azurerm_virtual_network.this.name
+  address_prefixes     = [var.bastion_subnet_cidr]
 }
 
 # --- NSGs --------------------------------------------------------------------
@@ -348,6 +357,10 @@ output "vm_subnet_id" {
 
 output "agw_subnet_id" {
   value = azurerm_subnet.agw.id
+}
+
+output "bastion_subnet_id" {
+  value = azurerm_subnet.bastion.id
 }
 
 output "vm_nsg_id" {

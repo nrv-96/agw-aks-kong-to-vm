@@ -186,6 +186,12 @@ def find_service(services):
     for service in services:
         if service.get("name") == exact:
             return service
+    # KIC 3.5 names Gateway API services after the HTTPRoute (for example
+    # httproute.kong.pairs-monitor.0), so match the Kubernetes Service tag.
+    for service in services:
+        tags = service.get("tags") or []
+        if f"k8s-name:{SERVICE_SUFFIX}" in tags and "k8s-kind:Service" in tags:
+            return service
     for service in services:
         if str(service.get("name", "")).endswith(SERVICE_SUFFIX):
             return service

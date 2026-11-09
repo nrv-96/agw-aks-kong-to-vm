@@ -52,6 +52,9 @@ VALUES_FILE="${PROJECT_DIR}/helm/values-${ENV_NAME}.yaml"
 
 REPLICAS="$(cfg_required '.kong.replicas')"
 
+# Optional local chart tarball; useful when the GitHub release URL is unreachable.
+CHART_REF="${KONG_CHART_TGZ:-kong/ingress}"
+
 csi_crd_present() {
   kubectl get crd secretproviderclasses.secrets-store.csi.x-k8s.io >/dev/null 2>&1
 }
@@ -88,8 +91,14 @@ install_gateway_api_crds() {
     return
   fi
   local url="https://github.com/kubernetes-sigs/gateway-api/releases/download/${GATEWAY_API_CRD_VERSION}/experimental-install.yaml"
-  log "installing Gateway API CRDs ${GATEWAY_API_CRD_VERSION} (experimental channel)"
-  kubectl apply --server-side -f "${url}"
+  local cached="${PROJECT_DIR}/.cache/gateway-api-${GATEWAY_API_CRD_VERSION}-experimental.yaml"
+  if [[ -f "${cached}" ]]; then
+    log "installing Gateway API CRDs ${GATEWAY_API_CRD_VERSION} from ${cached}"
+    kubectl apply --server-side -f "${cached}"
+  else
+    log "installing Gateway API CRDs ${GATEWAY_API_CRD_VERSION} (experimental channel)"
+    kubectl apply --server-side -f "${url}"
+  fi
 }
 
 helm_args=(
@@ -119,12 +128,14 @@ fi
 log "Kong chart ${KONG_CHART_VERSION} | gateway ${KONG_GATEWAY_IMAGE}:${KONG_GATEWAY_TAG} | KIC ${KIC_TAG}"
 log "namespace=${NAMESPACE} release=${RELEASE_NAME} env=${ENV_NAME} replicas=${REPLICAS} csi=${CSI_ENABLED}"
 
-helm repo add kong https://charts.konghq.com --force-update >/dev/null
-helm repo update kong >/dev/null
+if [[ "${CHART_REF}" == "kong/ingress" ]]; then
+  helm repo add kong https://charts.konghq.com --force-update >/dev/null
+  helm repo update kong >/dev/null
+fi
 
 RENDER_FILE="$(mktemp)"
 trap 'rm -f "${RENDER_FILE}"' EXIT
-helm template "${RELEASE_NAME}" kong/ingress "${helm_args[@]}" > "${RENDER_FILE}"
+helm template "${RELEASE_NAME}" "${CHART_REF}" "${helm_args[@]}" > "${RENDER_FILE}"
 
 if [[ "${CSI_ENABLED}" == "true" ]]; then
   bash "${SCRIPT_DIR}/verify-helm-workload-identity.sh" \
@@ -155,7 +166,7 @@ if [[ "${CSI_ENABLED}" == "true" ]]; then
 fi
 
 log "installing/upgrading release ${RELEASE_NAME}"
-helm upgrade --install "${RELEASE_NAME}" kong/ingress \
+helm upgrade --install "${RELEASE_NAME}" "${CHART_REF}" \
   "${helm_args[@]}" \
   --create-namespace \
   --atomic \

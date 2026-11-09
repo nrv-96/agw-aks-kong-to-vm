@@ -10,15 +10,13 @@
 # =============================================================================
 
 azure:
-  tenant_id: "<INPUT>"
-  subscription_id: "0a457f9a-0b37-4bc0-b7b3-2f712bdb361a"
-  subscription_name: "prod"
+  tenant_id: "3224f33f-f4c3-46a3-b624-7b0b452f9a98"
+  subscription_id: "6d064e64-7038-4a50-aa19-899b347bed41"
+  subscription_name: "PAG-PLomesh"
   environment: "dev"
   location: "eastus"
-
   resource_group:
     name: "rg-pairs-monitor-dev"
-
   network:
     vnet_name: "vnet-pairs-monitor-dev"
     vnet_cidr: "10.20.0.0/16"
@@ -31,14 +29,14 @@ azure:
     service_cidr: "10.96.0.0/16"
     dns_service_ip: "10.96.0.10"
     nat_gateway: true
-
   aks:
     name: "aks-pairs-monitor-dev"
     resource_group: "rg-pairs-monitor-dev"
     vnet_name: "vnet-pairs-monitor-dev"
     vnet_resource_group: "rg-pairs-monitor-dev"
-    # Pinned to the Kubernetes version supported by KIC 3.5.14 (client-go 0.33).
-    kubernetes_version: "1.33"
+    # Kubernetes 1.34 is the current standard-support minor in East US and is
+    # supported by KIC 3.5.x. 1.33 is LTS-only there.
+    kubernetes_version: "1.34"
     node_vm_size: "Standard_B4ms"
     node_min_count: 1
     node_max_count: 2
@@ -47,9 +45,15 @@ azure:
     private_cluster: false
     # Static private IP for the Kong internal LoadBalancer (snet-aks).
     internal_lb_ip: "10.20.1.250"
-
+    oidc_issuer_url: https://eastus.oic.prod-aks.azure.com/3224f33f-f4c3-46a3-b624-7b0b452f9a98/470acd2f-1319-4641-8148-53f4fc88c241/
+  bastion:
+    enabled: true
+    name: "bas-pairs-monitor-dev"
+    public_ip_name: "pip-bas-pairs-monitor-dev"
+    # Dedicated AzureBastionSubnet (/26 or larger); 10.20.3.0/24 is free.
+    subnet_cidr: "10.20.3.0/24"
   private_dns:
-    subscription_id: "0a457f9a-0b37-4bc0-b7b3-2f712bdb361a"
+    subscription_id: "6d064e64-7038-4a50-aa19-899b347bed41"
     resource_group: "rg-pairs-monitor-dev"
     zone_name: "internal.example.com"
     # Apex zone is internal.example.com; the backend record is
@@ -57,37 +61,35 @@ azure:
     # is resolved by the client hosts file to the AGW public IP.
     record_name: "be"
     ttl: 300
-
   keyvault:
     # <INPUT> = let Terraform generate a globally unique name; the sync script
     # writes it back here.
-    name: "<INPUT>"
+    name: "kv-pm-dev-ig8r"
     resource_group: "rg-pairs-monitor-dev"
-    workload_identity_client_id: "<INPUT>"
+    workload_identity_client_id: "af2ebf11-f30e-4ac7-8e77-cb286019cfcb"
     # Public access is enabled for this dev environment. Add your public IP/32
     # to restrict the vault firewall, or leave empty for allow-all.
     allowed_ip_ranges: []
-
   vm:
     admin_username: "azureuser"
     size: "Standard_B2s"
     image_publisher: "Canonical"
     image_offer: "ubuntu-24_04-lts"
-    image_sku: "server-gen2"
+    image_sku: "server"
     image_version: "latest"
     os_disk_type: "Standard_LRS"
     os_disk_size_gb: 30
-
   agw:
     # Set true only after the AGW frontend certificate exists in Key Vault.
-    enabled: false
+    enabled: true
     name: "agw-pairs-monitor-dev"
     public_ip_name: "pip-agw-pairs-monitor-dev"
+    public_ip: "20.119.58.31"
     sku: "Standard_v2"
     capacity: 1
-    # Versioned Key Vault certificate secret ID, written by the certificate
-    # workflow (certificates/issue-agw-cert.sh).
-    certificate_secret_id: "<INPUT>"
+    # Versioned Key Vault certificate secret ID. The frontend certificate is
+    # imported as a Key Vault certificate (PFX) from pki/kong/agw-frontend.pfx.
+    certificate_secret_id: "https://kv-pm-dev-ig8r.vault.azure.net/secrets/agw-frontend/e6bdbdd1bb154e52b84d7e1ea5333c39"
     trusted_root_ca_path: "../pki/root-ca.crt"
 
 application:
@@ -95,7 +97,6 @@ application:
   backend_hostname: "be.internal.example.com"
   port: 8100
   health_endpoint: "/health"
-
 # Linux VM application service layout (used by certificates/ and vm/ scripts).
 vm:
   app_user: "hello"
@@ -108,7 +109,6 @@ vm:
   env_file: "/etc/hello/hello.env"
   jar_name: "hello-app.jar"
   java_bin: "/usr/bin/java"
-
 kong:
   namespace: "kong"
   release_name: "kong"
@@ -116,37 +116,30 @@ kong:
   load_balancing_algorithm: "round-robin"
   gateway_api_enabled: true
   ingress_controller_enabled: true
-
   # Pinned versions - bump only after checking the Kong compatibility matrix.
   chart_version: "0.24.0"
   gateway_image: "kong"
   gateway_image_tag: "3.9.4"
   ingress_controller_image_tag: "3.5.14"
   gateway_api_crd_version: "v1.3.0"
-
   # Secret holding the TLS certificate for the Kong proxy listener
   # (SAN must contain application.public_hostname; signed by the private CA).
   proxy_tls_secret_name: "kong-proxy-tls"
-
   # Secret synced from Key Vault by the CSI driver and consumed by KIC.
   ca_secret_name: "pairs-monitor-ca"
-
   # Static private IP assigned to the Kong internal LoadBalancer.
   internal_lb_ip: "10.20.1.250"
-
 backends:
   - name: "vm1"
     private_ip: "10.20.2.51"
     port: 8100
     os: "linux"
     certificate_name: "pairs-monitor-vm1-tls"
-
   - name: "vm2"
     private_ip: "10.20.2.52"
     port: 8100
     os: "linux"
     certificate_name: "pairs-monitor-vm2-tls"
-
 certificates:
   issuer: "self-signed-private-ca"
   root_ca_name: "pairs-monitor-root-ca"
@@ -164,7 +157,6 @@ certificates:
   minimum_tls_version: "TLS1.2"
   renewal_threshold_days: 30
   server_certificate_validity_days: 365
-
 security:
   tls_mode: "server-authentication"
   verify_backend_certificates: true

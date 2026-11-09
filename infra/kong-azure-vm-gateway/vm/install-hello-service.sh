@@ -99,7 +99,10 @@ install -d -m 0750 "${CONFIG_DIR}" "${TLS_DIR}"
 install -m 0644 "${JAR}" "${INSTALL_DIR}/${JAR_NAME}"
 
 if [[ "${ROOT_PREFIX}" == "/" ]]; then
-  chown root:root "${INSTALL_DIR}" "${INSTALL_DIR}/${JAR_NAME}" "${CONFIG_DIR}"
+  chown root:root "${INSTALL_DIR}" "${INSTALL_DIR}/${JAR_NAME}"
+  # The app user must be able to traverse /etc/hello to reach tls/keystore.p12.
+  chown "root:${APP_GROUP}" "${CONFIG_DIR}"
+  chmod 0750 "${CONFIG_DIR}"
   chown "${APP_USER}:${APP_GROUP}" "${TLS_DIR}"
   chmod 0750 "${TLS_DIR}"
 fi

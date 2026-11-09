@@ -27,13 +27,22 @@ Upgrades are intentionally not automated to "latest": bump these pins in
 | `values-prod.yaml` | Internal Azure LB annotations, anti-affinity, larger resources, PDB `minAvailable: 2` |
 | `values-csi.yaml` | Key Vault CSI CA volume, health-check trust bundle and workload-identity pod label; added only when the driver exists |
 | `gateway.yaml` | `GatewayClass` (unmanaged) + `Gateway` with HTTPS/HTTP listeners |
-| `httproute.yaml` | HTTPS route to the backend Service + HTTP→HTTPS 301 redirect |
+| `httproute.yaml` | HTTPS route to the backend Service; the public HTTP→HTTPS redirect is handled by Application Gateway |
 | `service.yaml` | Selector-less Service `pairs-monitor-backend` with Kong annotations |
 | `endpointslice.yaml` | The two VM IPs as EndpointSlice targets (single registration mechanism) |
 | `backend-tls-policy.yaml` | SNI + CA + hostname verification for the VM upstreams |
 | `kong-upstream-policy.yaml` | Round-robin + active/passive HTTPS health checks |
 | `secret-provider-class.yaml` | Key Vault → CSI → `pairs-monitor-ca` Secret (`ca.crt` + `id`) and `/etc/kong/trust` mount |
-| `network-policy.yaml` | Admin API NetworkPolicy manifest (enforcement requires a CNI policy engine; this AKS cluster uses `network_policy = none`) |
+| `network-policy.yaml` | Admin API NetworkPolicy manifest (enforcement requires a CNI policy engine; this AKS cluster uses `network_policy = azure`, so it is enforced) |
+
+> **Upstream host/SNI:** the HTTPS route sets `konghq.com/preserve-host: "false"`,
+> so Kong sends `Host` and TLS SNI `be.internal.example.com` to the VMs. Without
+> it, Kong reuses the client `fe.internal.example.com` as the upstream SNI and
+> the VM certificate verification fails with 502.
+>
+> **Listener TLS:** `values.yaml` pins `proxy_listen` so both IPv4 and IPv6 8443
+> listeners use `ssl`. The chart default leaves the IPv6 listener plaintext,
+> which lets HTTP-only routes match HTTPS requests.
 
 `helm/*.yaml` manifests contain `${TOKEN}` placeholders and are rendered from
 `config/config.yaml` by `scripts/apply-kong-resources.sh`. Do not `kubectl apply`
@@ -42,7 +51,7 @@ them directly.
 ## Traffic and TLS flow
 
 ```
-Browser ──HTTPS(fe.internal.example.com)──► Application Gateway (phase 12)
+Browser ──HTTPS(fe.internal.example.com)──► Application Gateway (live, 20.119.58.31)
                                    │ HTTPS, trusts private root CA
                                    ▼
                         Kong Gateway :443 (cert SAN fe.internal.example.com)
@@ -55,7 +64,7 @@ Browser ──HTTPS(fe.internal.example.com)──► Application Gateway (phase
                                    │
                     ┌──────────────┴──────────────┐
                  VM1 10.20.2.51:8100          VM2 10.20.2.52:8100
-                 cert SAN be.internal.example.com (phase 2)
+                 cert SAN be.internal.example.com (live)
 ```
 
 Two distinct identities are used on purpose:
@@ -190,8 +199,12 @@ The Key Vault CSI integration requires all three of the following:
 
 `scripts/verify-helm-workload-identity.sh` renders the chart and asserts all three
 before Helm install/upgrade. If any item is missing, the deployment stops early.
-The CSI drive also needs the Terraform `Key Vault Secrets User` role; that is created
-by the identity stack, not the chart.
+The CSI driver also needs the Terraform `Key Vault Secrets User` role; that is
+granted to the Kong CSI workload identity (`id-kong-csi-<env>`), **not** to the AKS
+Key Vault provider add-on identity. The add-on identity is intentionally left
+without Key Vault RBAC because the `SecretProviderClass` uses workload identity.
+If a future `SecretProviderClass` omits `clientID` and falls back to managed
+identity, that add-on identity would need the role.
 
 ## CA rotation is not automatic
 
@@ -308,4 +321,4 @@ correct, secure behaviour.
 | `validate-kong.sh` reports protocol/tls_verify mismatch | BackendTLSPolicy accepted but KIC has not reconciled/pushed config yet; inspect KIC logs |
 | `BackendTLSPolicy` not Accepted, KIC logs `missing 'id' field` | CA Secret must contain `id` (UUID) in addition to `ca.crt`; fix the Key Vault `pairs-monitor-root-ca-id` object and restart the gateway pods |
 | Gateway not Programmed | `kubectl -n kong describe gateway pairs-monitor-gateway`; listener cert Secret must exist |
-| Admin API exposed | `network-policy.yaml` is not enforced with `network_policy=none`; keep the admin Service ClusterIP/headless and never expose it publicly |
+| Admin API exposed | `network-policy.yaml` is enforced with `network_policy=azure`; keep the admin Service ClusterIP/headless and never expose it publicly |

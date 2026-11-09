@@ -1,10 +1,20 @@
-# Public HTTPS route + HTTP->HTTPS redirect.
+# Public HTTPS route.
+#
+# The HTTP->HTTPS redirect is intentionally NOT an HTTPRoute here: KIC 3.5.14 /
+# Kong 3.9.4 matches the http-only redirect route on the HTTPS listener as well,
+# which redirects HTTPS to itself. Application Gateway owns the public HTTP
+# listener and its HTTP->HTTPS redirect in phase 3; the Kong internal listener
+# stays HTTPS-only.
 ---
 apiVersion: gateway.networking.k8s.io/v1
 kind: HTTPRoute
 metadata:
   name: pairs-monitor
   namespace: ${NAMESPACE}
+  annotations:
+    # Use the upstream host_header (be.internal.example.com) for the Host
+    # header and upstream TLS SNI instead of the client-facing hostname.
+    konghq.com/preserve-host: "false"
   labels:
     app.kubernetes.io/part-of: pairs-monitor
 spec:
@@ -23,23 +33,3 @@ spec:
           kind: Service
           name: pairs-monitor-backend
           port: ${BACKEND_PORT}
----
-apiVersion: gateway.networking.k8s.io/v1
-kind: HTTPRoute
-metadata:
-  name: pairs-monitor-http-redirect
-  namespace: ${NAMESPACE}
-  labels:
-    app.kubernetes.io/part-of: pairs-monitor
-spec:
-  parentRefs:
-    - name: pairs-monitor-gateway
-      sectionName: http
-  hostnames:
-    - ${PUBLIC_HOSTNAME}
-  rules:
-    - filters:
-        - type: RequestRedirect
-          requestRedirect:
-            scheme: https
-            statusCode: 301

@@ -27,6 +27,7 @@ module "network" {
   aks_subnet_cidr     = var.aks_subnet_cidr
   vm_subnet_cidr      = var.vm_subnet_cidr
   agw_subnet_cidr     = var.agw_subnet_cidr
+  bastion_subnet_cidr = var.bastion_subnet_cidr
   enable_nat_gateway  = var.enable_nat_gateway
   tags                = local.tags
 }
@@ -82,6 +83,8 @@ module "aks" {
   kubelet_identity_principal_id       = module.identity.kubelet_identity_principal_id
 
   tags = local.tags
+
+  depends_on = [module.network]
 }
 
 module "identity" {
@@ -113,7 +116,7 @@ resource "random_password" "admin" {
 }
 
 resource "local_sensitive_file" "admin_password" {
-  content         = random_password.admin.result
+  content         = local.vm_admin_password
   filename        = "${path.root}/vm-admin-password.txt"
   file_permission = "0600"
 }
@@ -128,7 +131,7 @@ module "vm" {
   vm1_ip              = var.vm1_ip
   vm2_ip              = var.vm2_ip
   admin_username      = var.admin_username
-  admin_password      = random_password.admin.result
+  admin_password      = local.vm_admin_password
   vm_size             = var.vm_size
   image_publisher     = var.vm_image_publisher
   image_offer         = var.vm_image_offer
@@ -136,6 +139,20 @@ module "vm" {
   image_version       = var.vm_image_version
   os_disk_type        = var.os_disk_type
   os_disk_size_gb     = var.os_disk_size_gb
+  tags                = local.tags
+
+  depends_on = [module.network]
+}
+
+module "bastion" {
+  source = "./modules/bastion"
+  count  = var.enable_bastion ? 1 : 0
+
+  resource_group_name = local.rg_name
+  location            = local.location
+  name                = var.bastion_name
+  public_ip_name      = var.bastion_public_ip_name
+  subnet_id           = module.network.bastion_subnet_id
   tags                = local.tags
 }
 
@@ -170,10 +187,4 @@ resource "azurerm_role_assignment" "agw_kv" {
   scope                = module.key_vault.id
   role_definition_name = "Key Vault Secrets User"
   principal_id         = module.identity.agw_identity_principal_id
-}
-
-resource "azurerm_role_assignment" "aks_addon_kv" {
-  scope                = module.key_vault.id
-  role_definition_name = "Key Vault Secrets User"
-  principal_id         = module.aks.key_vault_secrets_provider_identity_object_id
 }

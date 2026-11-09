@@ -37,6 +37,10 @@ gateway:
   env:
     database: "off"                 # DB-less / Ingress-controller managed
     router_flavor: "traditional"    # required for KIC-generated routes
+    # TLS on both IPv4 and IPv6 8443 listeners. The chart default leaves the
+    # IPv6 listener without `ssl`, which makes Kong's router treat 8443 as
+    # plaintext and lets HTTP-only routes match HTTPS requests.
+    proxy_listen: "0.0.0.0:8000, [::]:8000, 0.0.0.0:8443 http2 ssl, [::]:8443 http2 ssl"
     ssl_protocols: "TLSv1.2 TLSv1.3"
     ssl_ciphers: "ECDHE-ECDSA-AES128-GCM-SHA256:ECDHE-RSA-AES128-GCM-SHA256:ECDHE-ECDSA-AES256-GCM-SHA384:ECDHE-RSA-AES256-GCM-SHA384"
     # Kong 3.9 has no `proxy_server_tokens` setting - response header injection

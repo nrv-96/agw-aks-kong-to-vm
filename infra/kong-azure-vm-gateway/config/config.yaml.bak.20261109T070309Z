@@ -1,0 +1,174 @@
+# =============================================================================
+# Kong Gateway on AKS - single source of configuration
+# -----------------------------------------------------------------------------
+# Every deployment phase (Terraform, certificates, Helm, validation) reads this
+# file. Replace every <INPUT> before running anything. Terraform-generated
+# values (Key Vault name, workload identity client ID, tenant ID, AGW IP) are
+# written back by scripts/sync-terraform-outputs.sh.
+#
+# NOTE: Azure VNets cannot use 100.64.0.0/10 (CGNAT is reserved).
+# =============================================================================
+
+azure:
+  tenant_id: "3224f33f-f4c3-46a3-b624-7b0b452f9a98"
+  subscription_id: "6d064e64-7038-4a50-aa19-899b347bed41"
+  subscription_name: "PAG-PLomesh"
+  environment: "dev"
+  location: "eastus"
+
+  resource_group:
+    name: "rg-pairs-monitor-dev"
+
+  network:
+    vnet_name: "vnet-pairs-monitor-dev"
+    vnet_cidr: "10.20.0.0/16"
+    # CNI Overlay: pods use the pod CIDR, not the VNet, so the internal LB
+    # static IP can safely live in the AKS subnet.
+    aks_subnet_cidr: "10.20.1.0/24"
+    vm_subnet_cidr: "10.20.2.0/24"
+    agw_subnet_cidr: "10.20.4.0/24"
+    pod_cidr: "10.244.0.0/16"
+    service_cidr: "10.96.0.0/16"
+    dns_service_ip: "10.96.0.10"
+    nat_gateway: true
+
+  aks:
+    name: "aks-pairs-monitor-dev"
+    resource_group: "rg-pairs-monitor-dev"
+    vnet_name: "vnet-pairs-monitor-dev"
+    vnet_resource_group: "rg-pairs-monitor-dev"
+    # Kubernetes 1.34 is the current standard-support minor in East US and is
+    # supported by KIC 3.5.x. 1.33 is LTS-only there.
+    kubernetes_version: "1.34"
+    node_vm_size: "Standard_B4ms"
+    node_min_count: 1
+    node_max_count: 2
+    # Empty list = public API without IP restriction. Add your public IP/32.
+    authorized_ip_ranges: []
+    private_cluster: false
+    # Static private IP for the Kong internal LoadBalancer (snet-aks).
+    internal_lb_ip: "10.20.1.250"
+
+  private_dns:
+    subscription_id: "6d064e64-7038-4a50-aa19-899b347bed41"
+    resource_group: "rg-pairs-monitor-dev"
+    zone_name: "internal.example.com"
+    # Apex zone is internal.example.com; the backend record is
+    # be.internal.example.com -> VM1/VM2. The frontend fe.internal.example.com
+    # is resolved by the client hosts file to the AGW public IP.
+    record_name: "be"
+    ttl: 300
+
+  keyvault:
+    # <INPUT> = let Terraform generate a globally unique name; the sync script
+    # writes it back here.
+    name: "kv-pm-dev-ig8r"
+    resource_group: "rg-pairs-monitor-dev"
+    workload_identity_client_id: "af2ebf11-f30e-4ac7-8e77-cb286019cfcb"
+    # Public access is enabled for this dev environment. Add your public IP/32
+    # to restrict the vault firewall, or leave empty for allow-all.
+    allowed_ip_ranges: []
+
+  vm:
+    admin_username: "azureuser"
+    size: "Standard_B2s"
+    image_publisher: "Canonical"
+    image_offer: "ubuntu-24_04-lts"
+    image_sku: "server"
+    image_version: "latest"
+    os_disk_type: "Standard_LRS"
+    os_disk_size_gb: 30
+
+  agw:
+    # Set true only after the AGW frontend certificate exists in Key Vault.
+    enabled: false
+    name: "agw-pairs-monitor-dev"
+    public_ip_name: "pip-agw-pairs-monitor-dev"
+    sku: "Standard_v2"
+    capacity: 1
+    # Versioned Key Vault certificate secret ID, written by the certificate
+    # workflow (certificates/issue-agw-cert.sh).
+    certificate_secret_id: "<INPUT>"
+    trusted_root_ca_path: "../pki/root-ca.crt"
+
+application:
+  public_hostname: "fe.internal.example.com"
+  backend_hostname: "be.internal.example.com"
+  port: 8100
+  health_endpoint: "/health"
+
+# Linux VM application service layout (used by certificates/ and vm/ scripts).
+vm:
+  app_user: "hello"
+  app_group: "hello"
+  service_name: "hello-app"
+  install_dir: "/opt/hello-app"
+  config_dir: "/etc/hello"
+  tls_dir: "/etc/hello/tls"
+  keystore_path: "/etc/hello/tls/keystore.p12"
+  env_file: "/etc/hello/hello.env"
+  jar_name: "hello-app.jar"
+  java_bin: "/usr/bin/java"
+
+kong:
+  namespace: "kong"
+  release_name: "kong"
+  replicas: 3
+  load_balancing_algorithm: "round-robin"
+  gateway_api_enabled: true
+  ingress_controller_enabled: true
+
+  # Pinned versions - bump only after checking the Kong compatibility matrix.
+  chart_version: "0.24.0"
+  gateway_image: "kong"
+  gateway_image_tag: "3.9.4"
+  ingress_controller_image_tag: "3.5.14"
+  gateway_api_crd_version: "v1.3.0"
+
+  # Secret holding the TLS certificate for the Kong proxy listener
+  # (SAN must contain application.public_hostname; signed by the private CA).
+  proxy_tls_secret_name: "kong-proxy-tls"
+
+  # Secret synced from Key Vault by the CSI driver and consumed by KIC.
+  ca_secret_name: "pairs-monitor-ca"
+
+  # Static private IP assigned to the Kong internal LoadBalancer.
+  internal_lb_ip: "10.20.1.250"
+
+backends:
+  - name: "vm1"
+    private_ip: "10.20.2.51"
+    port: 8100
+    os: "linux"
+    certificate_name: "pairs-monitor-vm1-tls"
+
+  - name: "vm2"
+    private_ip: "10.20.2.52"
+    port: 8100
+    os: "linux"
+    certificate_name: "pairs-monitor-vm2-tls"
+
+certificates:
+  issuer: "self-signed-private-ca"
+  root_ca_name: "pairs-monitor-root-ca"
+  # Key Vault secret holding a stable UUID. KIC requires a `id` key next to the
+  # PEM in the CA Secret (the value becomes the Kong CA certificate entity ID),
+  # and the CSI driver can only build the Secret from Key Vault objects, so the
+  # UUID is synced as its own Key Vault secret.
+  # No trailing newline in the stored value. Example:
+  #   az keyvault secret set --vault-name <kv> \
+  #     --name pairs-monitor-root-ca-id --value "$(uuidgen)"
+  root_ca_id_name: "pairs-monitor-root-ca-id"
+  key_algorithm: "RSA"
+  key_size: 3072
+  root_ca_validity_days: 3650
+  minimum_tls_version: "TLS1.2"
+  renewal_threshold_days: 30
+  server_certificate_validity_days: 365
+
+security:
+  tls_mode: "server-authentication"
+  verify_backend_certificates: true
+  enforce_https: true
+  private_keys_exportable: false
+  use_managed_identity: true

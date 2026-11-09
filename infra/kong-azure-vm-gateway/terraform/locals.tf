@@ -11,5 +11,8 @@ locals {
   backend_fqdn  = "${var.backend_dns_record}.${var.internal_dns_zone}"
   frontend_fqdn = var.frontend_hostname
 
+  # Optional caller-supplied VM password; otherwise use the generated one.
+  vm_admin_password = var.vm_admin_password != "" ? var.vm_admin_password : random_password.admin.result
+
   tags = var.tags
 }

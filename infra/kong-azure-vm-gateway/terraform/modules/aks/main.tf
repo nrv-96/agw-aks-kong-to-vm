@@ -82,12 +82,19 @@ resource "azurerm_kubernetes_cluster" "this" {
     os_disk_type         = "Managed"
     os_disk_size_gb      = 30
     type                 = "VirtualMachineScaleSets"
+
+    # Pin the API defaults so the provider does not plan to remove them.
+    upgrade_settings {
+      drain_timeout_in_minutes      = 0
+      max_surge                     = "10%"
+      node_soak_duration_in_minutes = 0
+    }
   }
 
   network_profile {
     network_plugin      = "azure"
     network_plugin_mode = "overlay"
-    network_policy      = "none"
+    network_policy      = "azure"
     outbound_type       = "userAssignedNATGateway"
     load_balancer_sku   = "standard"
     pod_cidr            = var.pod_cidr
@@ -106,8 +113,4 @@ output "name" {
 
 output "oidc_issuer_url" {
   value = azurerm_kubernetes_cluster.this.oidc_issuer_url
-}
-
-output "key_vault_secrets_provider_identity_object_id" {
-  value = azurerm_kubernetes_cluster.this.key_vault_secrets_provider[0].secret_identity[0].object_id
 }
