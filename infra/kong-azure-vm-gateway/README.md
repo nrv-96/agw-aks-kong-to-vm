@@ -9,10 +9,19 @@ Entra ID SSO (pending).
 > Application Gateway are deployed and validated. Entra ID SSO and CA renewal
 > automation are pending.**
 > Terraform (9 modules) creates the resource group, network, private DNS, Key Vault,
-> AKS, identities, VMs, a Bastion host and (gated) Application Gateway. The Kong Helm layer and the
-> VM certificate/systemd automation are implemented. Renewal automation, Entra ID SSO,
-> CI and the full validation suite are pending. `./scripts/deploy.sh --phase all` still
-> fails on purpose.
+> AKS, identities, VMs, Bastion and Application Gateway. The Kong Helm layer,
+> VM certificate/systemd automation and AGW frontend are implemented. Renewal
+> automation, Entra ID SSO, CI and the full validation suite are pending.
+
+## Documentation
+
+| File | Purpose |
+|---|---|
+| `AGENT_HANDOFF.md` | **Start here** — live state, start-here checklist, commands, do-not-touch rules |
+| `KONG.md` | Kong architecture, Kubernetes objects, KIC translation, request flow, troubleshooting |
+| `CERTIFICATES.md` | Trust chain, every certificate/key, creation, storage, rotation, security |
+| `RUNBOOK.md` | Full repeatable deployment order and the errors hit |
+| `cost.md` | East US SKU inventory and hourly/monthly cost |
 
 ## Target architecture
 
@@ -34,8 +43,8 @@ Two distinct identities, deliberately:
 
 | Identity | Used for | Issued by |
 | --- | --- | --- |
-| `fe.internal.example.com` | browser → Application Gateway → Kong listener | application certificate (phase 2/12) |
-| `be.internal.example.com` | Kong → VM TLS (SNI + hostname + chain verification) | private root CA (phase 2) |
+| `fe.internal.example.com` | browser → Application Gateway → Kong listener | private root CA (`agw-frontend`, `kong-proxy-tls`) |
+| `be.internal.example.com` | Kong → VM TLS (SNI + hostname + chain verification) | private root CA (VM leaf certificates) |
 
 Placeholder backends are `10.20.2.51` / `10.20.2.52`. The spec's `100.64.2.51/52`
 cannot be used: Azure reserves `100.64.0.0/10` for CGNAT and rejects it in VNets.
@@ -45,6 +54,10 @@ cannot be used: Azure reserves `100.64.0.0/10` for CGNAT and rejects it in VNets
 ```
 kong-azure-vm-gateway/
 ├── config/config.yaml                  # single source of inputs + version pins
+├── AGENT_HANDOFF.md                    # start here: live state + agent checklist
+├── KONG.md                             # Kong architecture and request flow
+├── CERTIFICATES.md                     # TLS inventory, creation, rotation
+├── RUNBOOK.md                          # repeatable deployment order
 ├── cost.md                             # East US SKU/price inventory + monthly estimate
 ├── terraform/                          # 9 modules: RG, network, DNS, VM, KV, identity, AKS, AGW, Bastion
 ├── helm/
